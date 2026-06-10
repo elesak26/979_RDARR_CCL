@@ -51,25 +51,26 @@ router.get(
       );
 
       // ── Scores by BCBS 239 Principle ─────────────────────────────────────
+      // Questions that belong to multiple principles (separated by ' | ') are
+      // unnested so each principle receives its own averaged score row.
       const byBcbsResult = await query<{
-        bcbs_principle_number: string | null;
         bcbs_principle_name: string | null;
         avg_compliance_score: string;
         avg_validation_score: string;
         response_count: string;
       }>(
         `SELECT
-           q.bcbs_principle_number::text            AS bcbs_principle_number,
-           q.bcbs_principle_name,
+           TRIM(principle)                          AS bcbs_principle_name,
            ROUND(AVG(r.compliance_score), 2)::text  AS avg_compliance_score,
            ROUND(AVG(v.validation_score), 2)::text  AS avg_validation_score,
            COUNT(r.id)::text                        AS response_count
          FROM responses r
          JOIN questions q ON q.id = r.question_id
          LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id
+         CROSS JOIN LATERAL unnest(string_to_array(q.bcbs_principle_name, ' | ')) AS principle
          WHERE r.cycle_id = $1 AND r.status = 'submitted'
-         GROUP BY q.bcbs_principle_number, q.bcbs_principle_name
-         ORDER BY q.bcbs_principle_number NULLS LAST, q.bcbs_principle_name`,
+         GROUP BY TRIM(principle)
+         ORDER BY MIN(q.bcbs_principle_number) NULLS LAST, TRIM(principle)`,
         [cycleId]
       );
 
@@ -132,7 +133,6 @@ router.get(
           total_respondents: parseInt(counts.total_respondents ?? '0', 10),
         },
         scores_by_bcbs_principle: byBcbsResult.rows.map((r) => ({
-          bcbs_principle_number: r.bcbs_principle_number !== null ? parseInt(r.bcbs_principle_number, 10) : null,
           bcbs_principle_name:   r.bcbs_principle_name ?? null,
           avg_compliance_score:  r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
           avg_validation_score:  r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,

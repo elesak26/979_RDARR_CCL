@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, getCurrentUserId } from '../api/client';
-import type { Cycle, User } from '../types';
+import { api } from '../api/client';
+import type { Cycle, CycleComment, User } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 interface NewCycleForm {
   name: string;
   year: string;
+  description: string;
 }
 
 export default function CycleList({ currentUser }: Props) {
@@ -18,13 +19,17 @@ export default function CycleList({ currentUser }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState<NewCycleForm>({ name: '', year: String(new Date().getFullYear()) });
+  const [form, setForm] = useState<NewCycleForm>({ name: '', year: String(new Date().getFullYear()), description: '' });
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [rejectingCycleId, setRejectingCycleId] = useState<number | null>(null);
-  const [rejectComment, setRejectComment] = useState('');
+  const [deletingCycle, setDeletingCycle] = useState<Cycle | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [comments, setComments] = useState<Record<number, CycleComment[]>>({});
+  const [commentInput, setCommentInput] = useState<Record<number, string>>({});
+  const [postingComment, setPostingComment] = useState<number | null>(null);
+  const [expandedComments, setExpandedComments] = useState<Set<number>>(new Set());
   const [uploadingCycleId, setUploadingCycleId] = useState<number | null>(null);
-  const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const navigate = useNavigate();
 
   const role = currentUser?.role;
@@ -33,7 +38,7 @@ export default function CycleList({ currentUser }: Props) {
     if (c.status === 'draft') {
       if (role === 'Validator') return 'Next: submit this cycle for Senior Validator approval.';
       if (role === 'Senior Validator') return 'Waiting for a Validator to submit for approval.';
-      if (role === 'Admin') return 'Waiting for a Validator to submit for approval.';
+      if (role === 'Admin') return null;
     }
     if (c.status === 'pending_approval') {
       if (role === 'Senior Validator') return 'Action required: approve or reject this cycle.';
@@ -44,7 +49,7 @@ export default function CycleList({ currentUser }: Props) {
       return 'Approved — waiting for a Validator to distribute.';
     }
     if (c.status === 'distributed') {
-      if (role === 'Admin') return 'BUs are filling in their responses. You can close this cycle when ready.';
+      if (role === 'Validator') return 'BUs are filling in their responses. You can close this cycle when ready.';
       return 'Active — BUs are responding.';
     }
     if (c.status === 'closed') return 'This cycle is closed. View reports for results.';
@@ -57,6 +62,21 @@ export default function CycleList({ currentUser }: Props) {
     try {
       const data = await api.get<Cycle[]>('/cycles');
       setCycles(data);
+      // Auto-load comments for pending_approval and draft cycles (SV feedback visible after rejection)
+      const commentableCycles = data.filter(c => c.status === 'pending_approval' || c.status === 'draft');
+      if (commentableCycles.length > 0) {
+        const results = await Promise.all(
+          commentableCycles.map(c => api.get<CycleComment[]>(`/cycles/${c.id}/comments`).catch((): CycleComment[] => []))
+        );
+        const nextComments: Record<number, CycleComment[]> = {};
+        const autoExpand = new Set<number>();
+        commentableCycles.forEach((c, i) => {
+          nextComments[c.id] = results[i];
+          if (results[i].length > 0) autoExpand.add(c.id);
+        });
+        setComments(prev => ({ ...prev, ...nextComments }));
+        setExpandedComments(prev => new Set([...prev, ...autoExpand]));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -76,16 +96,54 @@ export default function CycleList({ currentUser }: Props) {
     }
   }
 
-  async function handleReject(cycleId: number) {
-    if (!rejectComment.trim()) return;
+
+  async function loadComments(cycleId: number) {
+    try {
+      const data = await api.get<CycleComment[]>(`/cycles/${cycleId}/comments`);
+      setComments(prev => ({ ...prev, [cycleId]: data }));
+    } catch {}
+  }
+
+  function toggleComments(cycleId: number) {
+    setExpandedComments(prev => {
+      const next = new Set(prev);
+      if (next.has(cycleId)) {
+        next.delete(cycleId);
+      } else {
+        next.add(cycleId);
+        loadComments(cycleId);
+      }
+      return next;
+    });
+  }
+
+  async function handlePostComment(cycleId: number) {
+    const body = (commentInput[cycleId] ?? '').trim();
+    if (!body) return;
+    setPostingComment(cycleId);
+    try {
+      await api.post(`/cycles/${cycleId}/comments`, { body });
+      setCommentInput(prev => ({ ...prev, [cycleId]: '' }));
+      await loadComments(cycleId);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Failed to post comment');
+    } finally {
+      setPostingComment(null);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deletingCycle) return;
+    setDeleting(true);
     setActionError(null);
     try {
-      await api.put(`/cycles/${cycleId}/reject`, { comment: rejectComment.trim() });
-      setRejectingCycleId(null);
-      setRejectComment('');
+      await api.delete(`/cycles/${deletingCycle.id}`);
       await load();
+      setDeletingCycle(null);
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : 'Reject failed');
+      setActionError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -95,14 +153,7 @@ export default function CycleList({ currentUser }: Props) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const headers: Record<string, string> = {};
-      const userId = getCurrentUserId();
-      if (userId) headers['X-User-Id'] = userId;
-      const res = await fetch(`/api/cycles/${cycleId}/checklist`, { method: 'POST', body: formData, headers });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
+      await api.upload(`/cycles/${cycleId}/checklist`, formData);
       await load();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Upload failed');
@@ -119,9 +170,10 @@ export default function CycleList({ currentUser }: Props) {
       await api.post<Cycle>('/cycles', {
         name: form.name.trim(),
         year: parseInt(form.year, 10),
+        description: form.description.trim() || undefined,
       });
       setShowModal(false);
-      setForm({ name: '', year: String(new Date().getFullYear()) });
+      setForm({ name: '', year: String(new Date().getFullYear()), description: '' });
       await load();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Failed to create');
@@ -137,16 +189,54 @@ export default function CycleList({ currentUser }: Props) {
     </div>
   );
 
+  const availableYears = [...new Set(cycles.map(c => c.year))].sort((a, b) => b - a);
+  const effectiveYear = (role === 'Validator' || role === 'Senior Validator')
+    ? (selectedYear ?? availableYears[0] ?? null)
+    : null;
+  const visibleCycles = effectiveYear !== null
+    ? cycles.filter(c => c.year === effectiveYear)
+    : cycles;
+
   return (
     <div>
       <div className="topbar" style={{ marginBottom: 16 }}>
         <div className="left">
           <strong style={{ fontSize: 18 }}>Validation Cycles</strong>
-          <span className="chip">{cycles.length} total</span>
+          <span className="chip">{visibleCycles.length} total</span>
         </div>
-        {role === 'Admin' && (
-          <button className="btn primary" onClick={() => setShowModal(true)}>+ New Cycle</button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {(role === 'Validator' || role === 'Senior Validator') && availableYears.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                Validation Year
+              </span>
+              <div style={{
+                display: 'flex', alignItems: 'center', position: 'relative',
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow-md)', overflow: 'hidden',
+              }}>
+                <div style={{ background: 'var(--accent-dark)', padding: '8px 12px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                </div>
+                <select
+                  value={effectiveYear ?? ''}
+                  onChange={e => setSelectedYear(Number(e.target.value))}
+                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, fontSize: 14, color: 'var(--text)', padding: '8px 32px 8px 12px', cursor: 'pointer', appearance: 'none', minWidth: 70 }}
+                >
+                  {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <div style={{ pointerEvents: 'none', position: 'absolute', right: 10, color: 'var(--muted)' }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+          )}
+          {role === 'Admin' && (
+            <button className="btn primary" onClick={() => setShowModal(true)}>+ New Cycle</button>
+          )}
+        </div>
       </div>
 
       {actionError && (
@@ -167,13 +257,18 @@ export default function CycleList({ currentUser }: Props) {
             </tr>
           </thead>
           <tbody>
-            {cycles.length === 0 && (
-              <tr><td colSpan={5} className="small" style={{ textAlign: 'center', padding: 32 }}>No cycles yet.</td></tr>
+            {visibleCycles.length === 0 && (
+              <tr><td colSpan={5} className="small" style={{ textAlign: 'center', padding: 32 }}>No cycles found.</td></tr>
             )}
-            {cycles.map(c => (
+            {visibleCycles.map(c => (
               <React.Fragment key={c.id}>
                 <tr>
-                  <td><strong>{c.name}</strong></td>
+                  <td>
+                    <strong>{c.name}</strong>
+                    {c.description && (
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>{c.description}</div>
+                    )}
+                  </td>
                   <td>{c.year}</td>
                   <td>
                     <WorkflowBadge status={c.status} size="sm" />
@@ -188,7 +283,12 @@ export default function CycleList({ currentUser }: Props) {
                     <div className="actions">
                       {/* Validator: submit draft for approval */}
                       {c.status === 'draft' && role === 'Validator' && (
-                        <button className="btn primary" onClick={() => handleAction(c.id, 'submit')}>
+                        <button
+                          className="btn primary"
+                          onClick={() => handleAction(c.id, 'submit')}
+                          disabled={!c.checklist_file}
+                          title={!c.checklist_file ? 'Upload a checklist file before submitting' : undefined}
+                        >
                           Submit for Approval
                         </button>
                       )}
@@ -199,8 +299,48 @@ export default function CycleList({ currentUser }: Props) {
                           <button className="btn primary" onClick={() => handleAction(c.id, 'approve')}>
                             Approve
                           </button>
-                          <button className="btn danger" onClick={() => { setRejectingCycleId(c.id); setRejectComment(''); }}>
+                          <button className="btn danger" onClick={() => handleAction(c.id, 'reject')}>
                             Reject
+                          </button>
+                          {c.checklist_file && (
+                            <a
+                              href={`/api/cycles/${c.id}/checklist`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                              </svg>
+                              Checklist
+                            </a>
+                          )}
+                          <button className="btn" onClick={() => toggleComments(c.id)}>
+                            {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* Validator on pending_approval: checklist download + comments */}
+                      {c.status === 'pending_approval' && role === 'Validator' && (
+                        <>
+                          {c.checklist_file && (
+                            <a
+                              href={`/api/cycles/${c.id}/checklist`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                              </svg>
+                              Checklist
+                            </a>
+                          )}
+                          <button className="btn" onClick={() => toggleComments(c.id)}>
+                            {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
                           </button>
                         </>
                       )}
@@ -212,8 +352,8 @@ export default function CycleList({ currentUser }: Props) {
                         </button>
                       )}
 
-                      {/* Admin: close a distributed cycle */}
-                      {c.status === 'distributed' && role === 'Admin' && (
+                      {/* Validator: close a distributed cycle */}
+                      {c.status === 'distributed' && role === 'Validator' && (
                         <button className="btn danger" onClick={() => handleAction(c.id, 'close')}>Close</button>
                       )}
 
@@ -221,37 +361,58 @@ export default function CycleList({ currentUser }: Props) {
                         <button className="btn" onClick={() => navigate('/reports')}>Reports →</button>
                       )}
 
-                      {/* Admin: checklist upload for any cycle */}
-                      {role === 'Admin' && (
+                      {/* Admin: delete draft or published cycle */}
+                      {role === 'Admin' && (c.status === 'draft' || c.status === 'published') && (
+                        <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
+                      )}
+
+                      {/* Validator: upload checklist on draft cycles */}
+                      {role === 'Validator' && c.status === 'draft' && (
                         <>
-                          <input
-                            type="file"
-                            accept=".xlsx,.xls,.pdf,.doc,.docx"
-                            style={{ display: 'none' }}
-                            ref={el => { fileInputRefs.current[c.id] = el; }}
-                            onChange={e => {
-                              const file = e.target.files?.[0];
-                              if (file) handleChecklistUpload(c.id, file);
-                              e.target.value = '';
-                            }}
-                          />
-                          <button
+                          <label
                             className="btn"
                             title={c.checklist_file ? 'Replace checklist' : 'Upload checklist'}
-                            onClick={() => fileInputRefs.current[c.id]?.click()}
-                            disabled={uploadingCycleId === c.id}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                              cursor: uploadingCycleId === c.id ? 'not-allowed' : 'pointer',
+                              opacity: uploadingCycleId === c.id ? 0.6 : 1,
+                            }}
                           >
+                            <input
+                              type="file"
+                              accept=".xlsx,.xls,.pdf,.doc,.docx"
+                              style={{ display: 'none' }}
+                              disabled={uploadingCycleId === c.id}
+                              onChange={e => {
+                                const file = e.target.files?.[0];
+                                if (file) handleChecklistUpload(c.id, file);
+                                e.target.value = '';
+                              }}
+                            />
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                             </svg>
                             {uploadingCycleId === c.id ? 'Uploading…' : c.checklist_file ? 'Replace Checklist' : 'Upload Checklist'}
-                          </button>
+                          </label>
                           {c.checklist_file && (
-                            <span style={{ fontSize: 11, color: 'var(--ok)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                              Checklist uploaded
-                            </span>
+                            <>
+                              <a
+                                href={`/api/cycles/${c.id}/checklist`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Checklist
+                              </a>
+                              <span style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.6, fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={c.checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ')}>
+                                {c.checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ')}
+                              </span>
+                            </>
                           )}
                         </>
                       )}
@@ -268,43 +429,94 @@ export default function CycleList({ currentUser }: Props) {
                     </td>
                   </tr>
                 )}
+
+                {/* Inline comment thread for pending_approval and draft cycles */}
+                {expandedComments.has(c.id) && (comments[c.id] ?? []).length > 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: '12px 16px 16px', background: 'var(--panel-alt, rgba(0,0,0,.02))', borderBottom: '1px solid var(--line)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                          Comments
+                        </div>
+                        <button className="btn" style={{ fontSize: 11, padding: '2px 10px' }} onClick={() => toggleComments(c.id)}>
+                          Hide Comments
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                        {(comments[c.id] ?? []).length === 0 && (
+                          <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No comments yet.</div>
+                        )}
+                        {(comments[c.id] ?? []).map(cm => (
+                          <div key={cm.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                            <div style={{
+                              width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                              background: cm.user_role === 'Senior Validator' ? 'var(--accent-dark)' : 'var(--accent)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'white', fontSize: 11, fontWeight: 700,
+                            }}>
+                              {cm.user_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 }}>
+                                <span style={{ fontSize: 13, fontWeight: 600 }}>{cm.user_name}</span>
+                                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{cm.user_role}</span>
+                                <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
+                                  {new Date(cm.created_at).toLocaleString()}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+                                {cm.body}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {(role === 'Validator' || role === 'Senior Validator') && c.status === 'pending_approval' && (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                          <textarea
+                            value={commentInput[c.id] ?? ''}
+                            onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handlePostComment(c.id); }}
+                            rows={2}
+                            placeholder="Write a comment… (Ctrl+Enter to send)"
+                            style={{ flex: 1, resize: 'vertical', fontSize: 13 }}
+                          />
+                          <button
+                            className="btn primary"
+                            onClick={() => handlePostComment(c.id)}
+                            disabled={postingComment === c.id || !(commentInput[c.id] ?? '').trim()}
+                            style={{ alignSelf: 'flex-end' }}
+                          >
+                            {postingComment === c.id ? 'Posting…' : 'Post'}
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
               </React.Fragment>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Reject modal */}
-      {rejectingCycleId !== null && (
-        <div className="modal-backdrop" onClick={() => setRejectingCycleId(null)}>
-          <div className="modal" style={{ padding: 24, minWidth: 400 }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ margin: '0 0 12px' }}>Reject Cycle</h2>
-            <p className="small" style={{ marginBottom: 12, color: 'var(--muted)' }}>
-              Please provide a reason for rejection. The Admin will see this comment.
+      {/* Delete Confirmation Modal */}
+      {deletingCycle !== null && (
+        <div className="modal-backdrop" onClick={() => setDeletingCycle(null)}>
+          <div className="modal" style={{ padding: 24, minWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ margin: '0 0 12px', color: 'var(--danger)' }}>Delete Cycle</h2>
+            <p style={{ fontSize: 14, marginBottom: 16, lineHeight: 1.6 }}>
+              Are you sure you want to permanently delete <strong>"{deletingCycle.name}"</strong>?
+              This action cannot be undone.
             </p>
-            <div className="field">
-              <label>Rejection Comment</label>
-              <textarea
-                value={rejectComment}
-                onChange={e => setRejectComment(e.target.value)}
-                rows={4}
-                style={{ width: '100%', resize: 'vertical' }}
-                placeholder="Describe what needs to be changed…"
-                autoFocus
-              />
-            </div>
             {actionError && (
               <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>{actionError}</div>
             )}
-            <div className="actions" style={{ marginTop: 12 }}>
-              <button
-                className="btn danger"
-                onClick={() => handleReject(rejectingCycleId)}
-                disabled={!rejectComment.trim()}
-              >
-                Confirm Rejection
+            <div className="actions">
+              <button className="btn danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete Cycle'}
               </button>
-              <button className="btn" onClick={() => setRejectingCycleId(null)}>Cancel</button>
+              <button className="btn" onClick={() => { setDeletingCycle(null); setActionError(null); }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -336,6 +548,16 @@ export default function CycleList({ currentUser }: Props) {
                   min={2020}
                   max={2099}
                   required
+                />
+              </div>
+              <div className="field">
+                <label>Description <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
+                <textarea
+                  value={form.description}
+                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical' }}
+                  placeholder="Brief description of this cycle's scope or objectives…"
                 />
               </div>
               {actionError && (

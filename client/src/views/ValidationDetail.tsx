@@ -360,7 +360,7 @@ export default function ValidationDetail() {
               style={{ padding: 16 }}
             >
               {/* Card header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: r.material_risk ? 6 : 10 }}>
                 <strong style={{ fontSize: 13 }}>{r.bu_code}</strong>
                 {r.compliance_score !== null ? (
                   <span style={{
@@ -378,6 +378,19 @@ export default function ValidationDetail() {
                   <span className="small">No score</span>
                 )}
               </div>
+
+              {/* Material risk badge */}
+              {r.material_risk && (
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: 'rgba(0,123,133,0.12)', color: 'var(--accent)',
+                    border: '1px solid var(--accent)',
+                  }}>
+                    {r.material_risk}
+                  </span>
+                </div>
+              )}
 
               {/* Status */}
               <div style={{ marginBottom: 8 }}>

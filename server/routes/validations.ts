@@ -80,12 +80,12 @@ router.get(
 
       // Get all BU responses for this question+cycle
       const responsesResult = await query(
-        `SELECT r.id, r.bu_code, r.status, r.compliance_score, r.comments,
+        `SELECT r.id, r.bu_code, r.material_risk, r.status, r.compliance_score, r.comments,
                 r.responder_id, r.responder_name, r.submitted_at,
                 r.return_comment, r.returned_at
          FROM responses r
          WHERE r.cycle_id = $1 AND r.question_id = $2
-         ORDER BY r.bu_code`,
+         ORDER BY r.bu_code, r.material_risk NULLS FIRST`,
         [cycleId, validation.question_id]
       );
 

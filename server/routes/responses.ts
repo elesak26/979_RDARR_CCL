@@ -27,7 +27,7 @@ router.get(
         params.push(bu_code);
       }
 
-      sql += ' ORDER BY q.item_number, r.bu_code';
+      sql += ' ORDER BY q.item_number, r.bu_code, r.material_risk NULLS FIRST';
 
       const result = await query(sql, params);
       res.json(result.rows);
@@ -46,7 +46,7 @@ router.get(
       const result = await query(
         `SELECT r.*, q.item_number, q.thematic_area, q.requirement,
                 q.expectations, q.score_1_desc, q.score_2_desc, q.score_3_desc, q.score_4_desc,
-                q.respondents_hint, q.supportive_material
+                q.respondents_hint, q.supportive_material, q.material_risk AS question_material_risk
          FROM responses r
          JOIN questions q ON q.id = r.question_id
          WHERE r.id = $1 AND r.cycle_id = $2`,
@@ -133,7 +133,9 @@ router.put(
 
       const { question_id } = result.rows[0];
 
-      // Check if ALL responses for this question+cycle are submitted
+      // Check if ALL responses for this question+cycle are submitted.
+      // For BU 961 questions, each material_risk row is independent — all must
+      // be submitted before the validation row is created.
       const allSubmitted = await query<{ total: string; submitted: string }>(
         `SELECT
            COUNT(*)                                         AS total,

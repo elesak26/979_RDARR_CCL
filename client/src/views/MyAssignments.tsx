@@ -85,17 +85,7 @@ export default function MyAssignments({ currentUser }: Props) {
       }
       setDrafts(init);
 
-      const attachMap: Record<number, Attachment[]> = {};
-      await Promise.all(
-        allResponses.map(async r => {
-          try {
-            attachMap[r.id] = await api.get<Attachment[]>(`/cycles/${r.cycle_id}/responses/${r.id}/attachments`);
-          } catch {
-            attachMap[r.id] = [];
-          }
-        })
-      );
-      setAttachments(attachMap);
+      // Attachments are loaded lazily when a row is expanded — not upfront
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -291,7 +281,15 @@ export default function MyAssignments({ currentUser }: Props) {
                 return (
                   <div key={r.id} style={{ borderBottom: idx < areaResponses.length - 1 ? '1px solid var(--line)' : undefined }}>
                     <div
-                      onClick={() => setExpanded(isOpen ? null : r.id)}
+                      onClick={() => {
+                        const opening = !isOpen;
+                        setExpanded(opening ? r.id : null);
+                        if (opening && attachments[r.id] === undefined) {
+                          api.get<Attachment[]>(`/cycles/${r.cycle_id}/responses/${r.id}/attachments`)
+                            .then(atts => setAttachments(prev => ({ ...prev, [r.id]: atts })))
+                            .catch(() => setAttachments(prev => ({ ...prev, [r.id]: [] })));
+                        }
+                      }}
                       style={{
                         display: 'grid',
                         gridTemplateColumns: '48px 1fr auto auto auto',
@@ -305,14 +303,26 @@ export default function MyAssignments({ currentUser }: Props) {
                     >
                       <div style={{ fontWeight: 700, color: 'var(--muted)', fontSize: 13 }}>#{r.item_number ?? '—'}</div>
 
-                      <div style={{
-                        fontSize: 13, lineHeight: 1.4,
-                        display: '-webkit-box',
-                        WebkitLineClamp: isOpen ? undefined : 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: isOpen ? 'visible' : 'hidden',
-                      }}>
-                        {r.requirement ?? '—'}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                        {r.material_risk && (
+                          <span style={{
+                            alignSelf: 'flex-start', fontSize: 10, fontWeight: 700,
+                            padding: '1px 8px', borderRadius: 999,
+                            background: 'rgba(0,123,133,0.12)', color: 'var(--accent)',
+                            border: '1px solid var(--accent)', whiteSpace: 'nowrap',
+                          }}>
+                            {r.material_risk}
+                          </span>
+                        )}
+                        <div style={{
+                          fontSize: 13, lineHeight: 1.4,
+                          display: '-webkit-box',
+                          WebkitLineClamp: isOpen ? undefined : 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: isOpen ? 'visible' : 'hidden',
+                        }}>
+                          {r.requirement ?? '—'}
+                        </div>
                       </div>
 
                       <div style={{ display: 'flex', gap: 4 }}>
@@ -342,7 +352,16 @@ export default function MyAssignments({ currentUser }: Props) {
                       </div>
 
                       <div
-                        onClick={e => { e.stopPropagation(); setExpanded(isOpen ? null : r.id); }}
+                        onClick={e => {
+                          e.stopPropagation();
+                          const opening = isOpen ? false : true;
+                          setExpanded(opening ? r.id : null);
+                          if (opening && attachments[r.id] === undefined) {
+                            api.get<Attachment[]>(`/cycles/${r.cycle_id}/responses/${r.id}/attachments`)
+                              .then(atts => setAttachments(prev => ({ ...prev, [r.id]: atts })))
+                              .catch(() => setAttachments(prev => ({ ...prev, [r.id]: [] })));
+                          }
+                        }}
                         title="Attachments"
                         style={{
                           fontSize: 11, padding: '2px 8px', borderRadius: 999,

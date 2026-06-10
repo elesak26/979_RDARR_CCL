@@ -96,7 +96,7 @@ export default function ValidationQueue() {
     <div>
       <div className="topbar" style={{ marginBottom: 16 }}>
         <div className="left">
-          <strong style={{ fontSize: 18 }}>Validation Queue</strong>
+          <strong style={{ fontSize: 18 }}>Validation Actions</strong>
           {effectiveFilter ? (
             <span className="chip">{displayedItems.length} filtered</span>
           ) : (

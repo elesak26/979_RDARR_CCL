@@ -51,11 +51,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [theme, setThemeState] = useState<string>(getTheme());
 
-  // Restore last selected user id from sessionStorage so switcher survives reload
-  useEffect(() => {
-    const saved = sessionStorage.getItem('ccl-dev-user');
-    if (saved) setCurrentUserId(saved);
-  }, []);
+  // currentUserId is read directly from sessionStorage on every request — no restore needed
 
   const loadInitial = useCallback(async () => {
     setLoading(true);
@@ -67,6 +63,8 @@ export default function App() {
       ]);
       setAllUsers(users);
       setCurrentUser(me);
+      // Always sync the resolved user so every subsequent request (incl. uploads) sends X-User-Id
+      setCurrentUserId(me.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Server unreachable');
     } finally {
@@ -78,8 +76,7 @@ export default function App() {
 
   function handleUserSwitch(userId: string) {
     setCurrentUserId(userId);
-    sessionStorage.setItem('ccl-dev-user', userId);
-    window.location.reload();
+    loadInitial();
   }
 
   function toggleTheme() {
@@ -176,7 +173,7 @@ export default function App() {
             )}
 
             {hasRole(currentUser, 'Validator', 'Senior Validator') && (
-              <NavLink to="/validation">✅ Validation Queue</NavLink>
+              <NavLink to="/validation">✅ Validation Actions</NavLink>
             )}
 
             {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') && (

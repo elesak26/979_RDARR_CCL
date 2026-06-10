@@ -1,16 +1,24 @@
 const BASE = '/api';
+const STORAGE_KEY = 'ccl-dev-user';
 
-// Store current user id for dev mode header
-let currentUserId: string | null = null;
-export function setCurrentUserId(id: string) { currentUserId = id; }
-export function getCurrentUserId() { return currentUserId; }
+function getUserId(): string | null {
+  // sessionStorage for current tab; localStorage as cross-tab fallback
+  return sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY);
+}
+
+export function setCurrentUserId(id: string) {
+  sessionStorage.setItem(STORAGE_KEY, id);
+  localStorage.setItem(STORAGE_KEY, id);
+}
+export function getCurrentUserId() { return getUserId(); }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
-  if (currentUserId) headers['X-User-Id'] = currentUserId;
+  const uid = getUserId();
+  if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -21,7 +29,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 async function upload<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
-  if (currentUserId) headers['X-User-Id'] = currentUserId;
+  const uid = getUserId();
+  if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { method: 'POST', body: formData, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));

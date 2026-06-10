@@ -30,7 +30,6 @@ interface ThematicAreaRow {
 }
 
 interface BcbsPrincipleRow {
-  bcbs_principle_number: number | null;
   bcbs_principle_name: string | null;
   avg_compliance_score: number | null;
   avg_validation_score: number | null;
@@ -276,6 +275,124 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     </div>
   );
 
+  // ── Validator / Senior Validator — Viewer-style layout ──────────────────────
+  if (!embedded && (currentUser?.role === 'Validator' || currentUser?.role === 'Senior Validator')) {
+    const CYCLE_META: Record<string, { label: string; accent: string; bg: string; clickable: boolean; hint?: string }> = {
+      distributed: { label: 'Active',    accent: 'var(--accent)', bg: 'var(--accent-light)',  clickable: true },
+      closed:      { label: 'Completed', accent: 'var(--ok)',     bg: 'rgba(40,167,69,.08)', clickable: true },
+    };
+
+    const sortedCycles = [...cycles].sort((a, b) => b.year - a.year || b.id - a.id);
+    const availableYears = [...new Set(sortedCycles.map(c => c.year))].sort((a, b) => b - a);
+    const effectiveYear = selectedYear ?? availableYears[0] ?? null;
+    const visibleCycles = effectiveYear !== null ? sortedCycles.filter(c => c.year === effectiveYear) : sortedCycles;
+
+    function CycleCard({ c }: { c: Cycle }) {
+      const meta = CYCLE_META[c.status] ?? { label: c.status, accent: 'var(--muted)', bg: 'var(--panel2)', clickable: false };
+      const isSelected = internalCycleId === c.id;
+      return (
+        <div
+          onClick={meta.clickable ? () => setInternalCycleId(c.id) : undefined}
+          style={{
+            background: isSelected ? meta.bg : 'var(--panel)',
+            border: `1px solid ${isSelected ? meta.accent : 'var(--line)'}`,
+            borderLeft: `4px solid ${meta.accent}`,
+            borderRadius: 'var(--radius2)',
+            boxShadow: isSelected ? 'var(--shadow-md)' : 'var(--shadow)',
+            padding: '14px 16px',
+            cursor: meta.clickable ? 'pointer' : 'default',
+            transition: 'box-shadow .15s, border-color .15s, background .15s',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}
+          onMouseEnter={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-md)'; }}
+          onMouseLeave={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow)'; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+              background: `${meta.accent === 'var(--muted)' ? 'var(--chip)' : meta.accent}18`,
+              color: meta.accent,
+            }}>
+              {meta.label}
+            </span>
+            {meta.clickable && (
+              <span style={{ fontSize: 11, color: meta.accent, fontWeight: 600 }}>
+                {isSelected ? '▾ Viewing' : 'View report →'}
+              </span>
+            )}
+            {!meta.clickable && (
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>{meta.hint ?? 'No report yet'}</span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+          <strong style={{ fontSize: 22 }}>Reports</strong>
+          {availableYears.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                Validation Year
+              </span>
+              <div style={{
+                display: 'flex', alignItems: 'center', position: 'relative',
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow-md)', overflow: 'hidden',
+              }}>
+                <div style={{ background: 'var(--accent-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                </div>
+                <select
+                  value={effectiveYear ?? ''}
+                  onChange={e => { setSelectedYear(Number(e.target.value)); setInternalCycleId(null); }}
+                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, fontSize: 15, color: 'var(--text)', padding: '10px 36px 10px 14px', cursor: 'pointer', appearance: 'none', minWidth: 80 }}
+                >
+                  {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <div style={{ pointerEvents: 'none', position: 'absolute', right: 12, color: 'var(--muted)' }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Cycle cards */}
+        {cycles.length === 0 ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)' }}>No active or completed cycles at this time.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 20 }}>
+            {visibleCycles.map(c => <CycleCard key={c.id} c={c} />)}
+            {visibleCycles.length === 0 && (
+              <div style={{ gridColumn: '1/-1', padding: '20px 0', color: 'var(--muted)', fontSize: 13 }}>
+                No cycles for {effectiveYear}.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Inline report */}
+        {internalCycleId && (
+          <Reports currentUser={currentUser} embedded activeCycleId={internalCycleId} onCycleChange={setInternalCycleId} />
+        )}
+        {!internalCycleId && cycles.length > 0 && (
+          <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>
+            Select a cycle above to view its report.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ── Derived data ────────────────────────────────────────────────────────────
 
   const submissionPct = summary
@@ -286,14 +403,11 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     ? Math.round((summary.counts.total_closed / Math.max(summary.counts.total_submitted, 1)) * 100)
     : 0;
 
-  const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => {
-    const fullName = row.bcbs_principle_name?.replace(/\n/g, ' / ').trim() ?? '—';
-    return {
-      name: fullName,
-      'BU Assessment': row.avg_compliance_score !== null ? Number(Number(row.avg_compliance_score).toFixed(2)) : 0,
-      'Validation': row.avg_validation_score !== null ? Number(Number(row.avg_validation_score).toFixed(2)) : 0,
-    };
-  });
+  const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => ({
+    name: row.bcbs_principle_name?.trim() ?? '—',
+    'BU Assessment': row.avg_compliance_score !== null ? Number(Number(row.avg_compliance_score).toFixed(2)) : 0,
+    'Validation': row.avg_validation_score !== null ? Number(Number(row.avg_validation_score).toFixed(2)) : 0,
+  }));
 
   const radarRows = (summary?.scores_by_thematic_area ?? [])
     .filter(r => r.avg_validation_score !== null);

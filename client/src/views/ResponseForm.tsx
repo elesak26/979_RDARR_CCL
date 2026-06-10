@@ -153,6 +153,15 @@ export default function ResponseForm({ currentUser }: Props) {
           <button className="btn" onClick={() => navigate('/assignments')} style={{ fontSize: 12, padding: '4px 10px' }}>← Back</button>
           <strong style={{ fontSize: 16 }}>Item #{question.item_number} — {question.thematic_area}</strong>
           <WorkflowBadge status={response.status} />
+          {response.material_risk && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 999,
+              background: 'rgba(0,123,133,0.12)', color: 'var(--accent)',
+              border: '1px solid var(--accent)', whiteSpace: 'nowrap',
+            }}>
+              {response.material_risk}
+            </span>
+          )}
         </div>
       </div>
 

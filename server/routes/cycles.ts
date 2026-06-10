@@ -68,7 +68,7 @@ const QUESTION_BU_MAP: Record<number, string[]> = {
 router.get('/api/cycles', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await query(
-      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, created_at, updated_at
+      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, description, created_at, updated_at
        FROM questionnaire_cycles
        ORDER BY year DESC, id DESC`
     );
@@ -84,7 +84,7 @@ router.get('/api/cycles/:id', async (req: Request, res: Response, next: NextFunc
     const { id } = req.params;
 
     const cycleResult = await query(
-      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, created_at, updated_at
+      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, description, created_at, updated_at
        FROM questionnaire_cycles
        WHERE id = $1`,
       [id]
@@ -116,16 +116,16 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
     return;
   }
   try {
-    const { name, year } = req.body as { name: string; year: number };
+    const { name, year, description } = req.body as { name: string; year: number; description?: string };
     if (!name || !year) {
       res.status(400).json({ error: 'name and year are required' });
       return;
     }
     const result = await query(
-      `INSERT INTO questionnaire_cycles (name, year, created_by)
-       VALUES ($1, $2, $3)
+      `INSERT INTO questionnaire_cycles (name, year, description, created_by)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [name, year, req.user?.id ?? null]
+      [name, year, description?.trim() || null, req.user?.id ?? null]
     );
     logAudit({ action: 'cycle_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(result.rows[0].id), cycle_id: result.rows[0].id as number, details: { name: result.rows[0].name, year: result.rows[0].year } });
     res.status(201).json(result.rows[0]);
@@ -142,6 +142,18 @@ router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: N
   }
   try {
     const { id } = req.params;
+    const check = await query<{ checklist_file: string | null }>(
+      `SELECT checklist_file FROM questionnaire_cycles WHERE id = $1 AND status = 'draft'`,
+      [id]
+    );
+    if (check.rows.length === 0) {
+      res.status(400).json({ error: 'Cycle not found or not in draft status' });
+      return;
+    }
+    if (!check.rows[0].checklist_file) {
+      res.status(400).json({ error: 'A checklist file must be uploaded before submitting for approval' });
+      return;
+    }
     const result = await query(
       `UPDATE questionnaire_cycles
        SET status = 'pending_approval', rejection_comment = NULL, updated_at = now()
@@ -194,23 +206,18 @@ router.put('/api/cycles/:id/reject', async (req: Request, res: Response, next: N
   }
   try {
     const { id } = req.params;
-    const { comment } = req.body as { comment?: string };
-    if (!comment?.trim()) {
-      res.status(400).json({ error: 'A rejection comment is required' });
-      return;
-    }
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'draft', rejection_comment = $2, published_at = NULL, updated_at = now()
+       SET status = 'draft', rejection_comment = NULL, published_at = NULL, updated_at = now()
        WHERE id = $1 AND status = 'pending_approval'
        RETURNING *`,
-      [id, comment.trim()]
+      [id]
     );
     if (result.rows.length === 0) {
       res.status(400).json({ error: 'Cycle not found or not pending approval' });
       return;
     }
-    logAudit({ action: 'cycle_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { comment: comment.trim() } });
+    logAudit({ action: 'cycle_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
     res.json(result.rows[0]);
   } catch (err) {
     next(err);
@@ -242,20 +249,30 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       [id]
     );
     if (parseInt(applicabilityCheck.rows[0].cnt, 10) === 0) {
-      // Fetch all questions so we can map item_number → question id
-      const questionsResult = await query<{ id: number; item_number: number }>(
-        `SELECT id, item_number FROM questions ORDER BY item_number`
+      // Fetch all questions including material_risk so we can expand BU 961 rows
+      const questionsResult = await query<{ id: number; item_number: number; material_risk: string | null }>(
+        `SELECT id, item_number, material_risk FROM questions ORDER BY item_number`
       );
-      const questionMap = new Map<number, number>();
-      for (const q of questionsResult.rows) questionMap.set(q.item_number, q.id);
+      const questionMap = new Map<number, { id: number; material_risk: string | null }>();
+      for (const q of questionsResult.rows) questionMap.set(q.item_number, { id: q.id, material_risk: q.material_risk });
 
-      // Build insert rows from the xlsx-derived mapping
-      const rows: { question_id: number; bu_code: string }[] = [];
+      // Build insert rows — BU 961 gets one row per material risk when the question has risks defined
+      const rows: { question_id: number; bu_code: string; material_risk: string | null }[] = [];
       for (const [itemNumber, buCodes] of Object.entries(QUESTION_BU_MAP)) {
-        const questionId = questionMap.get(Number(itemNumber));
-        if (!questionId) continue;
+        const qInfo = questionMap.get(Number(itemNumber));
+        if (!qInfo) continue;
+        const risks = qInfo.material_risk
+          ? qInfo.material_risk.split(',').map(r => r.trim()).filter(Boolean)
+          : [];
         for (const buCode of buCodes) {
-          rows.push({ question_id: questionId, bu_code: buCode });
+          if (buCode === '961' && risks.length > 0) {
+            // One applicability row per material risk for BU 961
+            for (const risk of risks) {
+              rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
+            }
+          } else {
+            rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
+          }
         }
       }
 
@@ -267,10 +284,10 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       // Bulk insert applicability entries
       for (const row of rows) {
         await query(
-          `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (cycle_id, question_id, bu_code) DO NOTHING`,
-          [id, row.question_id, row.bu_code, row.bu_code, req.user?.id ?? null]
+          `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by, material_risk)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING`,
+          [id, row.question_id, row.bu_code, row.bu_code, req.user?.id ?? null, row.material_risk ?? null]
         );
       }
     }
@@ -284,13 +301,13 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       [id]
     );
 
-    // Create draft response rows for every (question, BU) applicability entry
+    // Create draft response rows for every (question, BU, material_risk) applicability entry
     const insertResult = await query<{ cnt: string }>(
-      `INSERT INTO responses (cycle_id, question_id, bu_code)
-       SELECT qa.cycle_id, qa.question_id, qa.bu_code
+      `INSERT INTO responses (cycle_id, question_id, bu_code, material_risk)
+       SELECT qa.cycle_id, qa.question_id, qa.bu_code, qa.material_risk
        FROM question_applicability qa
        WHERE qa.cycle_id = $1
-       ON CONFLICT (cycle_id, question_id, bu_code) DO NOTHING
+       ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING
        RETURNING id`,
       [id]
     );
@@ -304,7 +321,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
 
 // PUT /api/cycles/:id/close — distributed → closed (Admin)
 router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Admin') {
+  if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -328,12 +345,38 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
   }
 });
 
-// POST /api/cycles/:id/checklist — upload checklist file (Admin only)
+// DELETE /api/cycles/:id — delete a draft or published cycle (Admin only)
+router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextFunction) => {
+  if (req.user?.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `DELETE FROM questionnaire_cycles
+       WHERE id = $1 AND status IN ('draft', 'published')
+       RETURNING id, name`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      res.status(400).json({ error: 'Cycle not found or cannot be deleted in its current status' });
+      return;
+    }
+    logAudit({ action: 'cycle_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { name: result.rows[0].name } });
+    res.json({ deleted: true, id: result.rows[0].id, name: result.rows[0].name });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/cycles/:id/checklist — upload checklist file (Admin or Validator on draft cycles)
 router.post(
   '/api/cycles/:id/checklist',
   checklistUpload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'Admin') {
+    const role = req.user?.role;
+    if (role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -343,16 +386,28 @@ router.post(
     }
     try {
       const { id } = req.params;
-      // Delete old file if present
-      const existing = await query<{ checklist_file: string | null }>(
-        `SELECT checklist_file FROM questionnaire_cycles WHERE id = $1`,
+
+      // Verify the cycle exists and Validator status constraint before touching files
+      const existing = await query<{ checklist_file: string | null; status: string }>(
+        `SELECT checklist_file, status FROM questionnaire_cycles WHERE id = $1`,
         [id]
       );
-      const old = existing.rows[0]?.checklist_file;
+      if (existing.rows.length === 0) {
+        res.status(404).json({ error: 'Cycle not found' });
+        return;
+      }
+      if (existing.rows[0].status !== 'draft') {
+        res.status(400).json({ error: 'Checklist can only be uploaded on draft cycles' });
+        return;
+      }
+
+      // Remove old file from disk now that we know the update will proceed
+      const old = existing.rows[0].checklist_file;
       if (old) {
         const oldPath = path.join(UPLOAD_DIR, old);
         fs.unlink(oldPath, () => {});
       }
+
       const result = await query(
         `UPDATE questionnaire_cycles SET checklist_file = $1, updated_at = now() WHERE id = $2 RETURNING *`,
         [req.file.filename, id]
@@ -394,6 +449,68 @@ router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next
     // Derive original name from stored filename (strip timestamp prefix)
     const originalName = checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ');
     res.download(filePath, originalName || `${cycleName}_checklist.xlsx`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/cycles/:id/comments — list comments (Validator, Senior Validator, Admin)
+router.get('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
+  const role = req.user?.role;
+  if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  try {
+    const { id } = req.params;
+    const result = await query<{
+      id: number; user_id: string; user_name: string; user_role: string; body: string; created_at: string;
+    }>(
+      `SELECT id, user_id, user_name, user_role, body, created_at
+       FROM cycle_comments WHERE cycle_id = $1 ORDER BY created_at ASC`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/cycles/:id/comments — post a comment (Validator or Senior Validator, pending_approval only)
+router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
+  const role = req.user?.role;
+  if (role !== 'Validator' && role !== 'Senior Validator') {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  try {
+    const { id } = req.params;
+    const { body } = req.body as { body: string };
+    if (!body?.trim()) {
+      res.status(400).json({ error: 'Comment body is required' });
+      return;
+    }
+    const cycleResult = await query<{ status: string }>(
+      `SELECT status FROM questionnaire_cycles WHERE id = $1`,
+      [id]
+    );
+    if (cycleResult.rows.length === 0) {
+      res.status(404).json({ error: 'Cycle not found' });
+      return;
+    }
+    if (cycleResult.rows[0].status !== 'pending_approval') {
+      res.status(400).json({ error: 'Comments can only be posted while the cycle is pending approval' });
+      return;
+    }
+    const result = await query<{
+      id: number; user_id: string; user_name: string; user_role: string; body: string; created_at: string;
+    }>(
+      `INSERT INTO cycle_comments (cycle_id, user_id, user_name, user_role, body)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, user_id, user_name, user_role, body, created_at`,
+      [id, req.user?.id, req.user?.display_name, role, body.trim()]
+    );
+    res.status(201).json(result.rows[0]);
   } catch (err) {
     next(err);
   }

@@ -33,6 +33,7 @@ export interface Cycle {
   published_at: string | null;
   distributed_at: string | null;
   closed_at: string | null;
+  description: string | null;
   rejection_comment: string | null;
   checklist_file: string | null;
   created_at: string;
@@ -62,6 +63,7 @@ export interface Response {
   cycle_id: number;
   question_id: number;
   bu_code: string;
+  material_risk: string | null;
   status: ResponseStatus;
   compliance_score: number | null;
   comments: string | null;
@@ -116,6 +118,15 @@ export interface WorkflowEvent {
   actor_id: string;
   actor_name: string;
   comment?: string;
+}
+
+export interface CycleComment {
+  id: number;
+  user_id: string;
+  user_name: string;
+  user_role: string;
+  body: string;
+  created_at: string;
 }
 
 export interface Attachment {

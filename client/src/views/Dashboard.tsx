@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, getCurrentUserId } from '../api/client';
-import type { User, Cycle, Response, Validation } from '../types';
+import type { User, Cycle, CycleComment, Response, Validation } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import Reports from './Reports';
 
@@ -40,6 +40,7 @@ export default function Dashboard({ currentUser }: Props) {
   const [validations, setValidations] = useState<Validation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cycleComments, setCycleComments] = useState<Record<number, CycleComment[]>>({});
   const [selectedCycleId, setSelectedCycleId] = useState<number | null>(null);
   const [viewerCycleId, setViewerCycleId] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -51,6 +52,21 @@ export default function Dashboard({ currentUser }: Props) {
     try {
       const allCycles = await api.get<Cycle[]>('/cycles');
       setCycles(allCycles);
+
+      // Load comments for pending_approval cycles (Validator needs to see SV feedback)
+      const pendingCycles = allCycles.filter(c => c.status === 'pending_approval');
+      if (pendingCycles.length > 0) {
+        const commentArrays = await Promise.all(
+          pendingCycles.map(c =>
+            api.get<CycleComment[]>(`/cycles/${c.id}/comments`).catch((): CycleComment[] => [])
+          )
+        );
+        const commentMap: Record<number, CycleComment[]> = {};
+        pendingCycles.forEach((c, i) => { commentMap[c.id] = commentArrays[i]; });
+        setCycleComments(commentMap);
+      } else {
+        setCycleComments({});
+      }
 
       const distributedCycles = allCycles.filter(c => c.status === 'distributed');
 
@@ -425,6 +441,44 @@ export default function Dashboard({ currentUser }: Props) {
       {/* VALIDATOR */}
       {role === 'Validator' && (
         <>
+          {/* Pending approval cycles with Senior Validator comments */}
+          {cycles.filter(c => c.status === 'pending_approval').map(c => {
+            const comments = cycleComments[c.id] ?? [];
+            const svComments = comments.filter(cm => cm.user_role === 'Senior Validator');
+            return (
+              <div key={c.id} style={{ marginBottom: 16, padding: '14px 16px', background: 'rgba(124,58,237,.06)', border: '1px solid rgba(124,58,237,.25)', borderLeft: '4px solid #7c3aed', borderRadius: 'var(--radius2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: svComments.length ? 12 : 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>"{c.name}" is pending approval</span>
+                  <Link to="/cycles" style={{ marginLeft: 'auto', fontSize: 12, color: '#7c3aed', textDecoration: 'none', fontWeight: 600 }}>View in Cycles →</Link>
+                </div>
+                {svComments.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: 2 }}>
+                      Senior Validator comments
+                    </div>
+                    {svComments.map(cm => (
+                      <div key={cm.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: 'white', borderRadius: 6, padding: '8px 12px' }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, background: '#7c3aed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 700 }}>
+                          {cm.user_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 2 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{cm.user_name}</span>
+                            <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>{new Date(cm.created_at).toLocaleString()}</span>
+                          </div>
+                          <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{cm.body}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {svComments.length === 0 && (
+                  <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No comments from Senior Validator yet.</div>
+                )}
+              </div>
+            );
+          })}
           <CycleSelector />
           <div className="kpi">
             <KpiCard
@@ -451,7 +505,7 @@ export default function Dashboard({ currentUser }: Props) {
           </div>
           <div style={{ marginTop: 16 }}>
             <Link to={`/validation${selectedCycleId !== null ? `?cycle_id=${selectedCycleId}` : ''}`}>
-              <button className="btn primary">Validation Queue →</button>
+              <button className="btn primary">Validation Actions →</button>
             </Link>
           </div>
         </>
@@ -481,7 +535,7 @@ export default function Dashboard({ currentUser }: Props) {
           </div>
           <div style={{ marginTop: 16 }}>
             <Link to={`/validation${selectedCycleId !== null ? `?cycle_id=${selectedCycleId}` : ''}`}>
-              <button className="btn primary">Validation Queue →</button>
+              <button className="btn primary">Validation Actions →</button>
             </Link>
           </div>
         </>
