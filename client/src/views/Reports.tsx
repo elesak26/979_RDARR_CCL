@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, getCurrentUserId } from '../api/client';
 import type { Cycle, User } from '../types';
+import { useBuNames } from '../hooks/useBuNames';
 import AdminAnalytics from './AdminAnalytics';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -177,6 +178,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     else setInternalCycleId(id);
   };
   const [summary, setSummary] = useState<CycleSummary | null>(null);
+  const [thematicBuFilter, setThematicBuFilter] = useState<string>('all');
+  const [thematicRows, setThematicRows] = useState<CycleSummary['scores_by_thematic_area'] | null>(null);
   const [loadingCycles, setLoadingCycles] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -214,10 +217,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const loadSummary = useCallback(async (cycleId: number) => {
     setLoadingSummary(true);
     setSummary(null);
+    setThematicRows(null);
+    setThematicBuFilter('all');
     setError(null);
     try {
       const data = await api.get<CycleSummary>(`/reporting/cycle/${cycleId}/summary`);
       setSummary(data);
+      setThematicRows(data.scores_by_thematic_area);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load report');
     } finally {
@@ -229,7 +235,21 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     if (selectedCycleId !== null) loadSummary(selectedCycleId);
   }, [selectedCycleId, loadSummary]);
 
+  useEffect(() => {
+    if (!selectedCycleId) return;
+    if (thematicBuFilter === 'all') {
+      // reset is handled by loadSummary; nothing to do here
+      return;
+    }
+    let cancelled = false;
+    api.get<CycleSummary>(`/reporting/cycle/${selectedCycleId}/summary?bu_code=${encodeURIComponent(thematicBuFilter)}`)
+      .then(data => { if (!cancelled) setThematicRows(data.scores_by_thematic_area); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [thematicBuFilter, selectedCycleId]);
+
   const selectedCycle = cycles.find(c => c.id === selectedCycleId);
+  const buName = useBuNames();
 
   const buildAuditParams = useCallback(() => {
     const params = new URLSearchParams();
@@ -634,9 +654,124 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
+          {/* ── Respondent Scores by Thematic Area ── */}
+          {!viewerMode && currentUser?.role !== 'Admin' && (() => {
+            const submittedBus = summary.scores_by_bu.filter(bu => bu.submitted_count > 0);
+            const rows = thematicRows ?? summary.scores_by_thematic_area;
+            const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
+            const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
+            const totalComp = compValues.length > 0 ? compValues.reduce((a, b) => a + b, 0) / compValues.length : null;
+            const totalVal  = valValues.length  > 0 ? valValues.reduce((a, b) => a + b, 0)  / valValues.length  : null;
+            return (
+              <div style={{
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+                marginBottom: 20, overflow: 'hidden',
+              }}>
+                {/* Header */}
+                <div style={{
+                  padding: '12px 20px', borderBottom: '1px solid var(--line)',
+                  background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                }}>
+                  <span style={{ fontSize: 15 }}>🗂️</span>
+                  <strong style={{ fontSize: 13 }}>Respondent Scores by Thematic Area</strong>
+                  <span className="small" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>{rows.length} areas</span>
+                </div>
+                {/* Respondent filter bar */}
+                {submittedBus.length > 0 && (
+                  <div style={{
+                    padding: '10px 20px', borderBottom: '1px solid var(--line)',
+                    background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 10,
+                  }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Respondent</span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => { setThematicBuFilter('all'); setThematicRows(summary.scores_by_thematic_area); }}
+                        style={{
+                          fontSize: 12, padding: '3px 12px', borderRadius: 20, cursor: 'pointer',
+                          border: `1px solid ${thematicBuFilter === 'all' ? 'var(--accent)' : 'var(--line)'}`,
+                          background: thematicBuFilter === 'all' ? 'var(--accent)' : 'transparent',
+                          color: thematicBuFilter === 'all' ? '#fff' : 'var(--text)',
+                          fontWeight: thematicBuFilter === 'all' ? 700 : 400,
+                          transition: 'all .15s',
+                        }}
+                      >
+                        All
+                      </button>
+                      {submittedBus.map(bu => (
+                        <button
+                          key={bu.bu_code}
+                          onClick={() => setThematicBuFilter(bu.bu_code)}
+                          style={{
+                            fontSize: 12, padding: '3px 12px', borderRadius: 20, cursor: 'pointer',
+                            border: `1px solid ${thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'var(--line)'}`,
+                            background: thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'transparent',
+                            color: thematicBuFilter === bu.bu_code ? '#fff' : 'var(--text)',
+                            fontWeight: thematicBuFilter === bu.bu_code ? 700 : 400,
+                            transition: 'all .15s',
+                          }}
+                        >
+                          {buName(bu.bu_code)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Table */}
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Thematic Area</th>
+                      <th style={{ textAlign: 'right', width: 80 }}>Questions</th>
+                      <th style={{ width: 220 }}>Avg Compliance</th>
+                      <th style={{ width: 220 }}>Avg Validation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 && (
+                      <tr><td colSpan={4} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
+                    )}
+                    {rows.map(row => {
+                      const compScore = row.avg_compliance_score;
+                      const rowBg = compScore !== null ? `${scoreColor(compScore)}08` : undefined;
+                      return (
+                        <tr key={row.thematic_area} style={{ background: rowBg }}>
+                          <td style={{ fontWeight: 500, fontSize: 13 }}>{row.thematic_area.trim()}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 13 }}>{row.response_count}</td>
+                          <td><ScoreBar value={row.avg_compliance_score} /></td>
+                          <td>
+                            {row.avg_validation_score !== null
+                              ? <ScoreBar value={row.avg_validation_score} />
+                              : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {rows.length > 0 && (
+                    <tfoot>
+                      <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--panel2)' }}>
+                        <td style={{ fontWeight: 700, fontSize: 13 }}>Overall Average</td>
+                        <td />
+                        <td><ScoreBar value={totalComp} /></td>
+                        <td>
+                          {totalVal !== null
+                            ? <ScoreBar value={totalVal} />
+                            : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
+                          }
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            );
+          })()}
+
           {/* ── Charts row ── */}
           <div style={{ display: 'grid', gridTemplateColumns: radarData.length > 2 ? '1fr 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
-            {/* Bar chart */}
+            {/* Bar chart — BCBS 239 Principle */}
             {barChartData.length > 0 && !(viewerMode && selectedCycle?.status === 'distributed') && currentUser?.role !== 'Admin' && (
               <div style={{
                 background: 'var(--panel)', border: '1px solid var(--line)',
@@ -750,56 +885,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             )}
           </div>
 
-          {/* ── Scores by Thematic Area ── */}
-          {!viewerMode && currentUser?.role !== 'Admin' && <div style={{
-            background: 'var(--panel)', border: '1px solid var(--line)',
-            borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
-            marginBottom: 20, overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '12px 20px', borderBottom: '1px solid var(--line)',
-              background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 10,
-            }}>
-              <span style={{ fontSize: 15 }}>🗂️</span>
-              <strong style={{ fontSize: 13 }}>Scores by Thematic Area</strong>
-              <span className="small" style={{ marginLeft: 'auto' }}>{summary.scores_by_thematic_area.length} areas</span>
-            </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Thematic Area</th>
-                  <th style={{ textAlign: 'right', width: 80 }}>Questions</th>
-                  <th style={{ width: 220 }}>Avg Compliance</th>
-                  <th style={{ width: 220 }}>Avg Validation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.scores_by_thematic_area.length === 0 && (
-                  <tr><td colSpan={4} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
-                )}
-                {summary.scores_by_thematic_area.map(row => {
-                  const compScore = row.avg_compliance_score;
-                  const rowBg = compScore !== null
-                    ? `${scoreColor(compScore)}08`
-                    : undefined;
-                  return (
-                    <tr key={row.thematic_area} style={{ background: rowBg }}>
-                      <td style={{ fontWeight: 500, fontSize: 13 }}>{row.thematic_area.trim()}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 13 }}>{row.response_count}</td>
-                      <td><ScoreBar value={row.avg_compliance_score} /></td>
-                      <td>
-                        {row.avg_validation_score !== null
-                          ? <ScoreBar value={row.avg_validation_score} />
-                          : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
-                        }
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>}
-
           {/* ── Scores by BU ── */}
           {currentUser?.role !== 'Admin' && <div style={{
             background: 'var(--panel)', border: '1px solid var(--line)',
@@ -849,7 +934,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                           fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
                           border: '1px solid var(--line)', color: 'var(--text)',
                         }}>
-                          {row.bu_code}
+                          {buName(row.bu_code)}
                         </span>
                       </td>
                       {selectedCycle?.status === 'closed' ? (

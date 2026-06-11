@@ -9,6 +9,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { cycleId } = req.params;
+      const buCode = req.query.bu_code as string | undefined;
 
       // ── Cycle-level counts ───────────────────────────────────────────────
       const countsResult = await query<{
@@ -29,7 +30,10 @@ router.get(
         [cycleId]
       );
 
-      // ── Scores by thematic area (avg compliance_score per area) ──────────
+      // ── Scores by thematic area (avg compliance_score per area, optional BU filter) ──
+      const byAreaParams: unknown[] = [cycleId];
+      const byAreaBuFilter = buCode ? ` AND r.bu_code = $2` : '';
+      if (buCode) byAreaParams.push(buCode);
       const byAreaResult = await query<{
         thematic_area: string;
         avg_compliance_score: string;
@@ -43,11 +47,11 @@ router.get(
            COUNT(DISTINCT q.id)::text               AS response_count
          FROM responses r
          JOIN questions q ON q.id = r.question_id
-         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id
-         WHERE r.cycle_id = $1 AND r.status = 'submitted'
+         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+         WHERE r.cycle_id = $1 AND r.status = 'submitted'${byAreaBuFilter}
          GROUP BY q.thematic_area
          ORDER BY q.thematic_area`,
-        [cycleId]
+        byAreaParams
       );
 
       // ── Scores by BCBS 239 Principle ─────────────────────────────────────
@@ -66,7 +70,7 @@ router.get(
            COUNT(r.id)::text                        AS response_count
          FROM responses r
          JOIN questions q ON q.id = r.question_id
-         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id
+         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
          CROSS JOIN LATERAL unnest(string_to_array(q.bcbs_principle_name, ' | ')) AS principle
          WHERE r.cycle_id = $1 AND r.status = 'submitted'
          GROUP BY TRIM(principle)
@@ -89,7 +93,7 @@ router.get(
            COUNT(r.id)::text                                                              AS response_count,
            COUNT(r.id) FILTER (WHERE r.status = 'submitted')::text                       AS submitted_count
          FROM responses r
-         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id
+         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
          WHERE r.cycle_id = $1
          GROUP BY r.bu_code
          ORDER BY r.bu_code`,
@@ -114,7 +118,7 @@ router.get(
            v.status                                 AS validation_status
          FROM validations v
          JOIN questions q ON q.id = v.question_id
-         LEFT JOIN responses r ON r.cycle_id = v.cycle_id AND r.question_id = v.question_id AND r.status = 'submitted'
+         LEFT JOIN responses r ON r.cycle_id = v.cycle_id AND r.question_id = v.question_id AND r.bu_code = v.bu_code AND r.status = 'submitted'
          WHERE v.cycle_id = $1
          GROUP BY v.question_id, q.item_number, q.thematic_area, v.validation_score, v.status
          ORDER BY q.item_number`,

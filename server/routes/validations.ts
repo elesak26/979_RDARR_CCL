@@ -27,7 +27,7 @@ router.get(
       const { cycleId } = req.params;
       const result = await query(
         `SELECT
-           v.id, v.cycle_id, v.question_id, v.status,
+           v.id, v.cycle_id, v.question_id, v.bu_code, v.status,
            v.validation_score, v.justification, v.additional_controls,
            v.validated_by, v.validated_at,
            v.senior_validated_by, v.senior_validated_at, v.senior_rejection_comment,
@@ -37,7 +37,7 @@ router.get(
          FROM validations v
          JOIN questions q ON q.id = v.question_id
          WHERE v.cycle_id = $1
-         ORDER BY q.item_number`,
+         ORDER BY q.item_number, v.bu_code`,
         [cycleId]
       );
       res.json(result.rows);
@@ -56,7 +56,7 @@ router.get(
 
       const validationResult = await query(
         `SELECT
-           v.id, v.cycle_id, v.question_id, v.status,
+           v.id, v.cycle_id, v.question_id, v.bu_code, v.status,
            v.validation_score, v.justification, v.additional_controls,
            v.validated_by, v.validated_at,
            v.senior_validated_by, v.senior_validated_at, v.senior_rejection_comment,
@@ -76,17 +76,17 @@ router.get(
         return;
       }
 
-      const validation = validationResult.rows[0] as { question_id: number };
+      const validation = validationResult.rows[0] as { question_id: number; bu_code: string | null };
 
-      // Get all BU responses for this question+cycle
+      // Get only this BU's responses for this question+cycle
       const responsesResult = await query(
         `SELECT r.id, r.bu_code, r.material_risk, r.status, r.compliance_score, r.comments,
                 r.responder_id, r.responder_name, r.submitted_at,
                 r.return_comment, r.returned_at
          FROM responses r
-         WHERE r.cycle_id = $1 AND r.question_id = $2
-         ORDER BY r.bu_code, r.material_risk NULLS FIRST`,
-        [cycleId, validation.question_id]
+         WHERE r.cycle_id = $1 AND r.question_id = $2 AND r.bu_code = $3
+         ORDER BY r.material_risk NULLS FIRST`,
+        [cycleId, validation.question_id, validation.bu_code]
       );
 
       res.json({

@@ -156,36 +156,25 @@ router.put(
         );
         for (const { question_id: qid } of buQuestions.rows) {
           await query(
-            `INSERT INTO validations (cycle_id, question_id, status)
-             VALUES ($1, $2, 'in_review')
-             ON CONFLICT (cycle_id, question_id)
+            `INSERT INTO validations (cycle_id, question_id, bu_code, status)
+             VALUES ($1, $2, $3, 'in_review')
+             ON CONFLICT (cycle_id, question_id, bu_code)
              DO UPDATE SET status = 'in_review', updated_at = now()
              WHERE validations.status NOT IN ('closed', 'pending_approval')`,
-            [cycleId, qid]
+            [cycleId, qid, bu_code]
           );
         }
       } else {
-        // BU hasn't finished yet — fall back to the original rule:
-        // create the validation row only when every BU for this question has submitted.
-        const allSubmitted = await query<{ total: string; submitted: string }>(
-          `SELECT
-             COUNT(*)                                         AS total,
-             COUNT(*) FILTER (WHERE status = 'submitted')    AS submitted
-           FROM responses
-           WHERE cycle_id = $1 AND question_id = $2`,
-          [cycleId, question_id]
+        // BU hasn't finished yet — still create/update the in_review row for this
+        // specific (question, BU) pair so partial progress is visible.
+        await query(
+          `INSERT INTO validations (cycle_id, question_id, bu_code, status)
+           VALUES ($1, $2, $3, 'in_review')
+           ON CONFLICT (cycle_id, question_id, bu_code)
+           DO UPDATE SET status = 'in_review', updated_at = now()
+           WHERE validations.status NOT IN ('closed', 'pending_approval')`,
+          [cycleId, question_id, bu_code]
         );
-        const { total, submitted } = allSubmitted.rows[0];
-        if (total === submitted && parseInt(total, 10) > 0) {
-          await query(
-            `INSERT INTO validations (cycle_id, question_id, status)
-             VALUES ($1, $2, 'in_review')
-             ON CONFLICT (cycle_id, question_id)
-             DO UPDATE SET status = 'in_review', updated_at = now()
-             WHERE validations.status NOT IN ('closed', 'pending_approval')`,
-            [cycleId, question_id]
-          );
-        }
       }
 
       logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id } });
@@ -221,14 +210,14 @@ router.put(
         return;
       }
 
-      const { question_id } = result.rows[0];
+      const { question_id, bu_code } = result.rows[0];
 
-      // Flip validation to 'returned' so the Validator's queue shows this question is awaiting the Responder.
+      // Flip this BU's validation to 'returned' so the Validator sees it is awaiting the Responder.
       await query(
         `UPDATE validations
          SET status = 'returned', updated_at = now()
-         WHERE cycle_id = $1 AND question_id = $2 AND status = 'in_review'`,
-        [cycleId, question_id]
+         WHERE cycle_id = $1 AND question_id = $2 AND bu_code = $3 AND status = 'in_review'`,
+        [cycleId, question_id, bu_code]
       );
 
       logAudit({ action: 'response_returned', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, return_comment: return_comment ?? null } });

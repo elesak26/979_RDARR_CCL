@@ -105,6 +105,7 @@ export interface Validation {
   created_at: string;
   updated_at: string;
   // joined
+  bu_code?: string;
   item_number?: number;
   thematic_area?: string;
   requirement?: string;

@@ -4,6 +4,7 @@ import { api, getCurrentUserId } from '../api/client';
 import type { Validation, Response, Cycle, User, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import { displayFileName } from '../utils/displayFileName';
+import { useBuNames } from '../hooks/useBuNames';
 
 const SCORE_LABELS: Record<number, string> = {
   1: 'Non-compliant',
@@ -137,19 +138,44 @@ export default function ValidationDetail() {
     }
   }
 
+  // After completing an action, navigate to the next item in the queue that needs the same role's attention.
+  async function navigateToNext(actionableStatuses: string[]) {
+    if (!cycle || !validation) { navigate('/validation'); return; }
+    try {
+      const all = await api.get<Validation[]>(`/cycles/${cycle.id}/validations`);
+      // Same sort order as ValidationQueue: status priority then item_number then bu_code
+      const order: Record<string, number> = { rejected: 0, in_review: 1, returned: 2, pending_approval: 3, pending: 4, closed: 5 };
+      const queue = all
+        .filter(v => actionableStatuses.includes(v.status) && v.id !== validation.id)
+        .sort((a, b) => {
+          const sd = (order[a.status] ?? 99) - (order[b.status] ?? 99);
+          if (sd !== 0) return sd;
+          const id = (a.item_number ?? 0) - (b.item_number ?? 0);
+          if (id !== 0) return id;
+          return (a.bu_code ?? '').localeCompare(b.bu_code ?? '');
+        });
+      if (queue.length > 0) {
+        navigate(`/validation/${queue[0].id}`, { state: { cycleId: cycle.id } });
+      } else {
+        navigate('/validation');
+      }
+    } catch {
+      navigate('/validation');
+    }
+  }
+
   async function handleSubmitForApproval() {
     if (!validation || !cycle) return;
     setSubmitting(true);
     setSaveError(null);
     try {
-      // Save first
       await api.put(`/cycles/${cycle.id}/validations/${validation.id}`, {
         validation_score: valScore,
         justification,
         additional_controls: additionalControls,
       });
       await api.put(`/cycles/${cycle.id}/validations/${validation.id}/close`);
-      await load();
+      await navigateToNext(['in_review', 'rejected']);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Submit for approval failed');
     } finally {
@@ -163,7 +189,7 @@ export default function ValidationDetail() {
     setSaveError(null);
     try {
       await api.put(`/cycles/${cycle.id}/validations/${validation.id}/approve`);
-      await load();
+      await navigateToNext(['pending_approval']);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Approve failed');
     } finally {
@@ -184,7 +210,7 @@ export default function ValidationDetail() {
         rejection_comment: rejectionComment,
       });
       setRejectionComment('');
-      await load();
+      await navigateToNext(['pending_approval']);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Reject failed');
     } finally {
@@ -259,6 +285,7 @@ export default function ValidationDetail() {
   const isInReview = validation.status === 'in_review';
   const isReturned = validation.status === 'returned';
   const isRejected = validation.status === 'rejected';
+  const buName = useBuNames();
   const isSeniorValidator = currentUser?.role === 'Senior Validator';
   const isValidator = currentUser?.role === 'Validator';
 
@@ -280,6 +307,14 @@ export default function ValidationDetail() {
         <div className="left">
           <button className="btn" onClick={() => navigate('/validation')} style={{ fontSize: 12, padding: '4px 10px' }}>← Back</button>
           <strong style={{ fontSize: 16 }}>Validation — Item #{validation.item_number}</strong>
+          {validation.bu_code && (
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: '3px 8px', borderRadius: 4,
+              background: 'var(--accent)18', color: 'var(--accent)', border: '1px solid var(--accent)44',
+            }}>
+              {buName(validation.bu_code)}
+            </span>
+          )}
           <WorkflowBadge status={validation.status} />
         </div>
         {cycle && <span className="small">{cycle.name} · {cycle.year}</span>}
@@ -362,7 +397,7 @@ export default function ValidationDetail() {
             >
               {/* Card header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: r.material_risk ? 6 : 10 }}>
-                <strong style={{ fontSize: 13 }}>{r.bu_code}</strong>
+                <strong style={{ fontSize: 13 }}>{buName(r.bu_code)}</strong>
                 {r.compliance_score !== null ? (
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -430,24 +465,29 @@ export default function ValidationDetail() {
                   <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Evidence Files</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {(attachments[r.id] ?? []).map(a => (
-                      <a
-                        key={a.id}
-                        href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '4px 8px', borderRadius: 4,
-                          background: 'var(--panel2)', border: '1px solid var(--line)',
-                          fontSize: 12, color: 'var(--accent)',
-                          textDecoration: 'none', overflow: 'hidden',
-                        }}
-                      >
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {displayFileName(a.file_name)}
-                        </span>
-                        <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>↓</span>
-                      </a>
+                      <div key={a.id} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 6,
+                        padding: '6px 8px', borderRadius: 4,
+                        background: 'var(--panel2)', border: '1px solid var(--line)',
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <a
+                            href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
+                            target="_blank" rel="noreferrer"
+                            style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                          >
+                            {displayFileName(a.file_name)}
+                          </a>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                            {a.uploaded_by && <span>{a.uploaded_by}</span>}
+                            {a.uploaded_by && a.uploaded_at && <span> · </span>}
+                            {a.uploaded_at && <span>{new Date(a.uploaded_at).toLocaleString()}</span>}
+                          </div>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -606,19 +646,23 @@ export default function ValidationDetail() {
                 padding: '6px 10px', borderRadius: 6,
                 background: 'var(--panel2)', border: '1px solid var(--line)',
               }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}>
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
                 </svg>
-                <a
-                  href={`/api/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`}
-                  target="_blank" rel="noreferrer"
-                  style={{ flex: 1, fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {displayFileName(a.file_name)}
-                </a>
-                {a.uploaded_by && (
-                  <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>{a.uploaded_by}</span>
-                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <a
+                    href={`/api/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`}
+                    target="_blank" rel="noreferrer"
+                    style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                  >
+                    {displayFileName(a.file_name)}
+                  </a>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                    {a.uploaded_by && <span>{a.uploaded_by}</span>}
+                    {a.uploaded_by && a.uploaded_at && <span> · </span>}
+                    {a.uploaded_at && <span>{new Date(a.uploaded_at).toLocaleString()}</span>}
+                  </div>
+                </div>
                 {canEdit && (
                   <button
                     onClick={() => handleValAttachDelete(a.id)}

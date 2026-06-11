@@ -481,21 +481,28 @@ export default function MyAssignments({ currentUser }: Props) {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                               {atts.map(a => (
                                 <div key={a.id} style={{
-                                  display: 'flex', alignItems: 'center', gap: 8,
-                                  padding: '6px 10px', background: 'var(--panel)',
-                                  border: '1px solid var(--line)', borderRadius: 6, fontSize: 12,
+                                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                                  padding: '7px 10px', background: 'var(--panel)',
+                                  border: '1px solid var(--line)', borderRadius: 6,
                                 }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}>
                                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
                                   </svg>
-                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {displayFileName(a.file_name)}
-                                  </span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {displayFileName(a.file_name)}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                                      {a.uploaded_by && <span>{a.uploaded_by}</span>}
+                                      {a.uploaded_by && a.uploaded_at && <span> · </span>}
+                                      {a.uploaded_at && <span>{new Date(a.uploaded_at).toLocaleString()}</span>}
+                                    </div>
+                                  </div>
                                   <a
                                     href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap' }}
+                                    style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}
                                     onClick={e => e.stopPropagation()}
                                   >
                                     Download
@@ -503,7 +510,7 @@ export default function MyAssignments({ currentUser }: Props) {
                                   {!isSubmitted && (
                                     <button
                                       onClick={e => { e.stopPropagation(); handleDeleteAttachment(r.id, r.cycle_id, a.id); }}
-                                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 4px', fontSize: 14, lineHeight: 1 }}
+                                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 4px', fontSize: 14, lineHeight: 1, flexShrink: 0 }}
                                       title="Remove file"
                                     >
                                       ×
@@ -582,7 +589,7 @@ export default function MyAssignments({ currentUser }: Props) {
       <div className="topbar" style={{ marginBottom: 16 }}>
         <div className="left">
           <strong style={{ fontSize: 18 }}>Self-Assessment</strong>
-          <span className="chip">{currentUser.primary_unit_code}</span>
+          <span className="chip">{currentUser.display_name || currentUser.primary_unit_code}</span>
           {!multiCycle && (
             <span className="chip">{selectedCycle.name} · {selectedCycle.year}</span>
           )}
