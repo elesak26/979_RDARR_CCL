@@ -36,6 +36,7 @@ export interface Cycle {
   description: string | null;
   rejection_comment: string | null;
   checklist_file: string | null;
+  checklist_original_name: string | null;
   created_at: string;
   updated_at: string;
 }

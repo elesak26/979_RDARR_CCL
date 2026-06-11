@@ -131,30 +131,61 @@ router.put(
         return;
       }
 
-      const { question_id } = result.rows[0];
+      const { question_id, bu_code } = result.rows[0];
 
-      // Check if ALL responses for this question+cycle are submitted.
-      // For BU 961 questions, each material_risk row is independent — all must
-      // be submitted before the validation row is created.
-      const allSubmitted = await query<{ total: string; submitted: string }>(
+      // Check if this BU has now submitted ALL of its responses for this cycle.
+      // If so, send every question it submitted to the Validator immediately,
+      // without waiting for other BUs to finish.
+      const buProgress = await query<{ total: string; submitted: string }>(
         `SELECT
            COUNT(*)                                         AS total,
            COUNT(*) FILTER (WHERE status = 'submitted')    AS submitted
          FROM responses
-         WHERE cycle_id = $1 AND question_id = $2`,
-        [cycleId, question_id]
+         WHERE cycle_id = $1 AND bu_code = $2`,
+        [cycleId, bu_code]
       );
 
-      const { total, submitted } = allSubmitted.rows[0];
-      if (total === submitted && parseInt(total, 10) > 0) {
-        // Upsert validation row → in_review
-        await query(
-          `INSERT INTO validations (cycle_id, question_id, status)
-           VALUES ($1, $2, 'in_review')
-           ON CONFLICT (cycle_id, question_id)
-           DO UPDATE SET status = 'in_review', updated_at = now()`,
+      const { total: buTotal, submitted: buSubmitted } = buProgress.rows[0];
+      if (buTotal === buSubmitted && parseInt(buTotal, 10) > 0) {
+        // BU has completed its full self-assessment — promote all its submitted
+        // questions to in_review so the Validator can start evaluating them now.
+        const buQuestions = await query<{ question_id: number }>(
+          `SELECT DISTINCT question_id FROM responses
+           WHERE cycle_id = $1 AND bu_code = $2 AND status = 'submitted'`,
+          [cycleId, bu_code]
+        );
+        for (const { question_id: qid } of buQuestions.rows) {
+          await query(
+            `INSERT INTO validations (cycle_id, question_id, status)
+             VALUES ($1, $2, 'in_review')
+             ON CONFLICT (cycle_id, question_id)
+             DO UPDATE SET status = 'in_review', updated_at = now()
+             WHERE validations.status NOT IN ('closed', 'pending_approval')`,
+            [cycleId, qid]
+          );
+        }
+      } else {
+        // BU hasn't finished yet — fall back to the original rule:
+        // create the validation row only when every BU for this question has submitted.
+        const allSubmitted = await query<{ total: string; submitted: string }>(
+          `SELECT
+             COUNT(*)                                         AS total,
+             COUNT(*) FILTER (WHERE status = 'submitted')    AS submitted
+           FROM responses
+           WHERE cycle_id = $1 AND question_id = $2`,
           [cycleId, question_id]
         );
+        const { total, submitted } = allSubmitted.rows[0];
+        if (total === submitted && parseInt(total, 10) > 0) {
+          await query(
+            `INSERT INTO validations (cycle_id, question_id, status)
+             VALUES ($1, $2, 'in_review')
+             ON CONFLICT (cycle_id, question_id)
+             DO UPDATE SET status = 'in_review', updated_at = now()
+             WHERE validations.status NOT IN ('closed', 'pending_approval')`,
+            [cycleId, question_id]
+          );
+        }
       }
 
       logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id } });

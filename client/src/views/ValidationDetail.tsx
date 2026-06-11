@@ -3,6 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { api, getCurrentUserId } from '../api/client';
 import type { Validation, Response, Cycle, User, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
+import { displayFileName } from '../utils/displayFileName';
 
 const SCORE_LABELS: Record<number, string> = {
   1: 'Non-compliant',
@@ -443,7 +444,7 @@ export default function ValidationDetail() {
                         }}
                       >
                         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {a.file_name}
+                          {displayFileName(a.file_name)}
                         </span>
                         <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>↓</span>
                       </a>
@@ -598,66 +599,68 @@ export default function ValidationDetail() {
         {/* Validator Attachments */}
         <div style={{ marginBottom: 20 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Supporting Evidence</div>
-          {valAttachments.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-              {valAttachments.map(a => (
-                <div key={a.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 10px', borderRadius: 6,
-                  background: 'var(--panel2)', border: '1px solid var(--line)',
-                }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                  <a
-                    href={`/api/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`}
-                    target="_blank" rel="noreferrer"
-                    style={{ flex: 1, fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {a.file_name}
-                  </a>
-                  {a.uploaded_by && (
-                    <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>{a.uploaded_by}</span>
-                  )}
-                  {canEdit && (
-                    <button
-                      onClick={() => handleValAttachDelete(a.id)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '0 2px', fontSize: 14, lineHeight: 1, flexShrink: 0 }}
-                      title="Remove"
-                    >×</button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {canEdit && (
-            <>
-              <input
-                type="file"
-                ref={valFileRef}
-                style={{ display: 'none' }}
-                onChange={e => {
-                  const file = e.target.files?.[0];
-                  if (file) handleValAttachUpload(file);
-                  e.target.value = '';
-                }}
-              />
-              <button
-                className="btn"
-                onClick={() => valFileRef.current?.click()}
-                disabled={uploadingValAttach}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {valAttachments.map(a => (
+              <div key={a.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 10px', borderRadius: 6,
+                background: 'var(--panel2)', border: '1px solid var(--line)',
+              }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
                 </svg>
-                {uploadingValAttach ? 'Uploading…' : 'Attach File'}
-              </button>
-            </>
-          )}
-          {!canEdit && valAttachments.length === 0 && (
-            <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No supporting files attached.</div>
-          )}
+                <a
+                  href={`/api/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`}
+                  target="_blank" rel="noreferrer"
+                  style={{ flex: 1, fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {displayFileName(a.file_name)}
+                </a>
+                {a.uploaded_by && (
+                  <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>{a.uploaded_by}</span>
+                )}
+                {canEdit && (
+                  <button
+                    onClick={() => handleValAttachDelete(a.id)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '0 2px', fontSize: 14, lineHeight: 1, flexShrink: 0 }}
+                    title="Remove"
+                  >×</button>
+                )}
+              </div>
+            ))}
+            {canEdit && (
+              <>
+                <input
+                  type="file"
+                  ref={valFileRef}
+                  style={{ display: 'none' }}
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (file) handleValAttachUpload(file);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => valFileRef.current?.click()}
+                  disabled={uploadingValAttach}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '6px 10px', fontSize: 13,
+                    border: '1px dashed var(--line)', borderRadius: 6,
+                    background: 'transparent', color: uploadingValAttach ? 'var(--muted)' : 'var(--accent)',
+                    cursor: uploadingValAttach ? 'default' : 'pointer', width: '100%', textAlign: 'left',
+                  }}
+                >
+                  {uploadingValAttach
+                    ? <><span style={{ fontSize: 13 }}>⏳</span> Uploading…</>
+                    : <><span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Attach another file…</>}
+                </button>
+              </>
+            )}
+            {!canEdit && valAttachments.length === 0 && (
+              <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No supporting files attached.</div>
+            )}
+          </div>
         </div>
 
         {isClosed && validation.validated_at && (

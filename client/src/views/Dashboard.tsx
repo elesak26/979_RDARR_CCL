@@ -4,6 +4,7 @@ import { api, getCurrentUserId } from '../api/client';
 import type { User, Cycle, CycleComment, Response, Validation } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import Reports from './Reports';
+import { displayFileName } from '../utils/displayFileName';
 
 interface Props {
   currentUser: User | null;
@@ -295,7 +296,7 @@ export default function Dashboard({ currentUser }: Props) {
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement('a');
                           a.href = url;
-                          a.download = selectedCycle.checklist_file!.replace(/^\d+_/, '').replace(/_/g, ' ');
+                          a.download = selectedCycle.checklist_original_name ?? displayFileName(selectedCycle.checklist_file);
                           a.click();
                           URL.revokeObjectURL(url);
                         });

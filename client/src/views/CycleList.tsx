@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, getCurrentUserId } from '../api/client';
 import type { Cycle, CycleComment, User } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
+import { displayFileName } from '../utils/displayFileName';
 
 interface Props {
   currentUser: User | null;
@@ -29,6 +30,8 @@ export default function CycleList({ currentUser }: Props) {
   const [postingComment, setPostingComment] = useState<number | null>(null);
   const [expandedComments, setExpandedComments] = useState<Set<number>>(new Set());
   const [uploadingCycleId, setUploadingCycleId] = useState<number | null>(null);
+  const [checklistMenuOpen, setChecklistMenuOpen] = useState<number | null>(null);
+  const checklistFileRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const navigate = useNavigate();
 
@@ -62,8 +65,8 @@ export default function CycleList({ currentUser }: Props) {
     try {
       const data = await api.get<Cycle[]>('/cycles');
       setCycles(data);
-      // Auto-load comments for pending_approval and draft cycles (SV feedback visible after rejection)
-      const commentableCycles = data.filter(c => c.status === 'pending_approval' || c.status === 'draft');
+      // Load comments for all cycles so they are always visible
+      const commentableCycles = data;
       if (commentableCycles.length > 0) {
         const results = await Promise.all(
           commentableCycles.map(c => api.get<CycleComment[]>(`/cycles/${c.id}/comments`).catch((): CycleComment[] => []))
@@ -86,10 +89,22 @@ export default function CycleList({ currentUser }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (checklistMenuOpen === null) return;
+    const close = () => setChecklistMenuOpen(null);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [checklistMenuOpen]);
+
   async function handleAction(cycleId: number, action: string, body?: object) {
     setActionError(null);
     try {
       await api.put(`/cycles/${cycleId}/${action}`, body);
+      const pending = (commentInput[cycleId] ?? '').trim();
+      if (pending) {
+        await api.post(`/cycles/${cycleId}/comments`, { body: pending });
+        setCommentInput(prev => ({ ...prev, [cycleId]: '' }));
+      }
       await load();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Action failed');
@@ -145,6 +160,24 @@ export default function CycleList({ currentUser }: Props) {
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function handleChecklistDownload(c: Cycle) {
+    setChecklistMenuOpen(null);
+    const headers: Record<string, string> = {};
+    const uid = getCurrentUserId();
+    if (uid) headers['X-User-Id'] = uid;
+    const res = await fetch(`/api/cycles/${c.id}/checklist`, { headers });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = c.checklist_original_name ?? displayFileName(c.checklist_file ?? '');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function handleChecklistUpload(cycleId: number, file: File) {
@@ -281,40 +314,69 @@ export default function CycleList({ currentUser }: Props) {
                   <td className="small">{new Date(c.created_at).toLocaleDateString()}</td>
                   <td>
                     <div className="actions">
-                      {/* Validator: submit draft for approval */}
+                      {/* Validator: submit draft for approval + comments */}
                       {c.status === 'draft' && role === 'Validator' && (
-                        <button
-                          className="btn primary"
-                          onClick={() => handleAction(c.id, 'submit')}
-                          disabled={!c.checklist_file}
-                          title={!c.checklist_file ? 'Upload a checklist file before submitting' : undefined}
-                        >
-                          Submit for Approval
-                        </button>
+                        <>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <input
+                              type="text"
+                              value={commentInput[c.id] ?? ''}
+                              onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
+                              placeholder="Note to Senior Validator…"
+                              style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}
+                            />
+                            <button
+                              className="btn primary"
+                              onClick={() => handleAction(c.id, 'submit')}
+                              disabled={!c.checklist_file}
+                              title={!c.checklist_file ? 'Upload a checklist file before submitting' : undefined}
+                            >
+                              Submit for Approval
+                            </button>
+                          </div>
+                          <button className="btn" onClick={() => toggleComments(c.id)}>
+                            {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
+                          </button>
+                        </>
                       )}
 
                       {/* Senior Validator: approve or reject pending cycles */}
                       {c.status === 'pending_approval' && role === 'Senior Validator' && (
                         <>
-                          <button className="btn primary" onClick={() => handleAction(c.id, 'approve')}>
-                            Approve
-                          </button>
-                          <button className="btn danger" onClick={() => handleAction(c.id, 'reject')}>
-                            Reject
-                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <input
+                              type="text"
+                              value={commentInput[c.id] ?? ''}
+                              onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
+                              placeholder="Note to Validator…"
+                              style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}
+                            />
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn primary" onClick={() => handleAction(c.id, 'approve')}>
+                                Approve
+                              </button>
+                              <button className="btn danger" onClick={() => handleAction(c.id, 'reject')}>
+                                Reject
+                              </button>
+                            </div>
+                          </div>
                           {c.checklist_file && (
-                            <a
-                              href={`/api/cycles/${c.id}/checklist`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
-                            >
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                              </svg>
-                              Checklist
-                            </a>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                              <button
+                                className="btn"
+                                onClick={() => handleChecklistDownload(c)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Checklist
+                              </button>
+                              <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={c.checklist_original_name ?? displayFileName(c.checklist_file)}>
+                                {c.checklist_original_name ?? displayFileName(c.checklist_file)}
+                              </span>
+                            </div>
                           )}
                           <button className="btn" onClick={() => toggleComments(c.id)}>
                             {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
@@ -326,18 +388,22 @@ export default function CycleList({ currentUser }: Props) {
                       {c.status === 'pending_approval' && role === 'Validator' && (
                         <>
                           {c.checklist_file && (
-                            <a
-                              href={`/api/cycles/${c.id}/checklist`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
-                            >
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                              </svg>
-                              Checklist
-                            </a>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                              <button
+                                className="btn"
+                                onClick={() => handleChecklistDownload(c)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Checklist
+                              </button>
+                              <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={c.checklist_original_name ?? displayFileName(c.checklist_file)}>
+                                {c.checklist_original_name ?? displayFileName(c.checklist_file)}
+                              </span>
+                            </div>
                           )}
                           <button className="btn" onClick={() => toggleComments(c.id)}>
                             {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
@@ -347,9 +413,29 @@ export default function CycleList({ currentUser }: Props) {
 
                       {/* Validator: distribute an approved cycle */}
                       {c.status === 'published' && role === 'Validator' && (
-                        <button className="btn primary" onClick={() => handleAction(c.id, 'distribute')}>
-                          Distribute
-                        </button>
+                        <>
+                          <button className="btn primary" onClick={() => handleAction(c.id, 'distribute')}>
+                            Distribute
+                          </button>
+                          {c.checklist_file && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                              <button
+                                className="btn"
+                                onClick={() => handleChecklistDownload(c)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Checklist
+                              </button>
+                              <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={c.checklist_original_name ?? displayFileName(c.checklist_file)}>
+                                {c.checklist_original_name ?? displayFileName(c.checklist_file)}
+                              </span>
+                            </div>
+                          )}
+                        </>
                       )}
 
                       {/* Validator: close a distributed cycle */}
@@ -361,60 +447,107 @@ export default function CycleList({ currentUser }: Props) {
                         <button className="btn" onClick={() => navigate('/reports')}>Reports →</button>
                       )}
 
+                      {/* Comments toggle — visible on any cycle that has comments */}
+                      {(c.status === 'distributed' || c.status === 'closed') && (comments[c.id] ?? []).length > 0 && (
+                        <button className="btn" onClick={() => toggleComments(c.id)}>
+                          {expandedComments.has(c.id) ? 'Hide Comments' : `Comments (${(comments[c.id] ?? []).length})`}
+                        </button>
+                      )}
+
                       {/* Admin: delete draft or published cycle */}
                       {role === 'Admin' && (c.status === 'draft' || c.status === 'published') && (
                         <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
                       )}
 
-                      {/* Validator: upload checklist on draft cycles */}
+                      {/* Validator: checklist button on draft cycles */}
                       {role === 'Validator' && c.status === 'draft' && (
-                        <>
-                          <label
-                            className="btn"
-                            title={c.checklist_file ? 'Replace checklist' : 'Upload checklist'}
-                            style={{
-                              display: 'inline-flex', alignItems: 'center', gap: 5,
-                              cursor: uploadingCycleId === c.id ? 'not-allowed' : 'pointer',
-                              opacity: uploadingCycleId === c.id ? 0.6 : 1,
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls,.pdf,.doc,.docx"
+                            style={{ display: 'none' }}
+                            ref={el => { checklistFileRefs.current[c.id] = el; }}
+                            disabled={uploadingCycleId === c.id}
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleChecklistUpload(c.id, file);
+                              e.target.value = '';
+                              setChecklistMenuOpen(null);
                             }}
-                          >
-                            <input
-                              type="file"
-                              accept=".xlsx,.xls,.pdf,.doc,.docx"
-                              style={{ display: 'none' }}
+                          />
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              className="btn"
                               disabled={uploadingCycleId === c.id}
-                              onChange={e => {
-                                const file = e.target.files?.[0];
-                                if (file) handleChecklistUpload(c.id, file);
-                                e.target.value = '';
+                              onClick={() => {
+                                if (!c.checklist_file) {
+                                  checklistFileRefs.current[c.id]?.click();
+                                } else {
+                                  setChecklistMenuOpen(prev => prev === c.id ? null : c.id);
+                                }
                               }}
-                            />
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                            {uploadingCycleId === c.id ? 'Uploading…' : c.checklist_file ? 'Replace Checklist' : 'Upload Checklist'}
-                          </label>
-                          {c.checklist_file && (
-                            <>
-                              <a
-                                href={`/api/cycles/${c.id}/checklist`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="btn"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                              </svg>
+                              {uploadingCycleId === c.id ? 'Uploading…' : 'Checklist'}
+                              {c.checklist_file && (
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                              )}
+                            </button>
+                            {checklistMenuOpen === c.id && (
+                              <div
+                                onMouseDown={e => e.stopPropagation()}
+                                style={{
+                                  position: 'absolute', top: '100%', left: 0, zIndex: 50,
+                                  marginTop: 4, minWidth: 140,
+                                  background: 'var(--panel)', border: '1px solid var(--line)',
+                                  borderRadius: 6, boxShadow: 'var(--shadow-md)',
+                                  overflow: 'hidden',
+                                }}
                               >
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                                </svg>
-                                Checklist
-                              </a>
-                              <span style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.6, fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                title={c.checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ')}>
-                                {c.checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ')}
-                              </span>
-                            </>
+                                <button
+                                  onClick={() => handleChecklistDownload(c)}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                                    padding: '8px 12px', fontSize: 13, color: 'var(--text)',
+                                    background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                                  }}
+                                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover-bg)')}
+                                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                  </svg>
+                                  View
+                                </button>
+                                <button
+                                  onClick={() => { setChecklistMenuOpen(null); checklistFileRefs.current[c.id]?.click(); }}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                                    padding: '8px 12px', fontSize: 13, color: 'var(--text)',
+                                    background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                                    borderTop: '1px solid var(--line)',
+                                  }}
+                                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover-bg)')}
+                                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                                  </svg>
+                                  Replace
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {c.checklist_file && (
+                            <span style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.6, fontStyle: 'italic', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={c.checklist_original_name ?? displayFileName(c.checklist_file)}>
+                              {c.checklist_original_name ?? displayFileName(c.checklist_file)}
+                            </span>
                           )}
-                        </>
+                        </div>
                       )}
                     </div>
                   </td>
@@ -430,17 +563,14 @@ export default function CycleList({ currentUser }: Props) {
                   </tr>
                 )}
 
-                {/* Inline comment thread for pending_approval and draft cycles */}
-                {expandedComments.has(c.id) && (comments[c.id] ?? []).length > 0 && (
+                {/* Inline comment thread — on published cycles only Admin/Validator/Senior Validator can see comments */}
+                {expandedComments.has(c.id) && !(c.status === 'published' && role === 'Responder') && (
                   <tr>
                     <td colSpan={5} style={{ padding: '12px 16px 16px', background: 'var(--panel-alt, rgba(0,0,0,.02))', borderBottom: '1px solid var(--line)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <div style={{ marginBottom: 10 }}>
                         <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>
                           Comments
                         </div>
-                        <button className="btn" style={{ fontSize: 11, padding: '2px 10px' }} onClick={() => toggleComments(c.id)}>
-                          Hide Comments
-                        </button>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                         {(comments[c.id] ?? []).length === 0 && (
@@ -471,7 +601,7 @@ export default function CycleList({ currentUser }: Props) {
                           </div>
                         ))}
                       </div>
-                      {(role === 'Validator' || role === 'Senior Validator') && c.status === 'pending_approval' && (
+                      {(role === 'Validator' || role === 'Senior Validator') && (c.status === 'draft' || c.status === 'pending_approval' || (c.status === 'published' && role === 'Senior Validator')) && (
                         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                           <textarea
                             value={commentInput[c.id] ?? ''}

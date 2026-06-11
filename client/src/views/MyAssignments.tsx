@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api/client';
 import type { User, Cycle, Response, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
+import { displayFileName } from '../utils/displayFileName';
 
 interface Props {
   currentUser: User;
@@ -477,58 +478,66 @@ export default function MyAssignments({ currentUser }: Props) {
                             )}
 
                             <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Evidence Files</div>
-                            {atts.length > 0 && (
-                              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {atts.map(a => (
-                                  <div key={a.id} style={{
-                                    display: 'flex', alignItems: 'center', gap: 8,
-                                    padding: '6px 10px', background: 'var(--panel)',
-                                    border: '1px solid var(--line)', borderRadius: 6, fontSize: 12,
-                                  }}>
-                                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {a.file_name}
-                                    </span>
-                                    <a
-                                      href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap' }}
-                                      onClick={e => e.stopPropagation()}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {atts.map(a => (
+                                <div key={a.id} style={{
+                                  display: 'flex', alignItems: 'center', gap: 8,
+                                  padding: '6px 10px', background: 'var(--panel)',
+                                  border: '1px solid var(--line)', borderRadius: 6, fontSize: 12,
+                                }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                                  </svg>
+                                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {displayFileName(a.file_name)}
+                                  </span>
+                                  <a
+                                    href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap' }}
+                                    onClick={e => e.stopPropagation()}
+                                  >
+                                    Download
+                                  </a>
+                                  {!isSubmitted && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); handleDeleteAttachment(r.id, r.cycle_id, a.id); }}
+                                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 4px', fontSize: 14, lineHeight: 1 }}
+                                      title="Remove file"
                                     >
-                                      Download
-                                    </a>
-                                    {!isSubmitted && (
-                                      <button
-                                        onClick={e => { e.stopPropagation(); handleDeleteAttachment(r.id, r.cycle_id, a.id); }}
-                                        style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '0 4px', fontSize: 14 }}
-                                        title="Remove file"
-                                      >
-                                        ×
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {isEditable && (
-                              <div>
-                                <input
-                                  ref={el => { fileRefs.current[r.id] = el; }}
-                                  type="file"
-                                  id={`file-${r.id}`}
-                                  style={{ display: 'none' }}
-                                  onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(r, f); }}
-                                />
-                                <button
-                                  className="btn"
-                                  onClick={e => { e.stopPropagation(); fileRefs.current[r.id]?.click(); }}
-                                  disabled={isUploadingNow}
-                                  style={{ fontSize: 12, padding: '5px 12px' }}
-                                >
-                                  {isUploadingNow ? 'Uploading…' : '+ Attach File'}
-                                </button>
-                              </div>
-                            )}
+                                      ×
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                              {isEditable && (
+                                <>
+                                  <input
+                                    ref={el => { fileRefs.current[r.id] = el; }}
+                                    type="file"
+                                    id={`file-${r.id}`}
+                                    style={{ display: 'none' }}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(r, f); }}
+                                  />
+                                  <button
+                                    onClick={e => { e.stopPropagation(); fileRefs.current[r.id]?.click(); }}
+                                    disabled={isUploadingNow}
+                                    style={{
+                                      display: 'flex', alignItems: 'center', gap: 6,
+                                      padding: '6px 10px', fontSize: 12,
+                                      border: '1px dashed var(--line)', borderRadius: 6,
+                                      background: 'transparent', color: isUploadingNow ? 'var(--muted)' : 'var(--accent)',
+                                      cursor: isUploadingNow ? 'default' : 'pointer', width: '100%', textAlign: 'left',
+                                    }}
+                                  >
+                                    {isUploadingNow
+                                      ? <><span style={{ fontSize: 13 }}>⏳</span> Uploading…</>
+                                      : <><span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Attach another file…</>}
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
 

@@ -2,8 +2,58 @@ import path from 'path';
 import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
+import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
+
+interface ChecklistRow {
+  itemNumber: number;
+  buCodes: string[];
+  materialRisk: string | null;
+}
+
+function parseChecklistXlsx(filePath: string): ChecklistRow[] {
+  const wb = XLSX.readFile(filePath);
+  const ws = wb.Sheets['Compliance Checklist'];
+  if (!ws) throw new Error('XLSX is missing the "Compliance Checklist" sheet');
+
+  const raw = XLSX.utils.sheet_to_json<(string | number | null)[]>(ws, { header: 1, defval: null });
+
+  // Find header row (contains "Item #")
+  let hdrIdx = -1;
+  for (let i = 0; i < Math.min(20, raw.length); i++) {
+    if (raw[i] && raw[i][0] === 'Item #') { hdrIdx = i; break; }
+  }
+  if (hdrIdx === -1) throw new Error('Cannot find header row ("Item #") in Compliance Checklist sheet');
+
+  const COL_ITEM = 0;
+  const COL_UNITS = 10;
+  const COL_RISK = 12;
+
+  const results: ChecklistRow[] = [];
+  for (let i = hdrIdx + 1; i < raw.length; i++) {
+    const row = raw[i];
+    if (!row || row.every(c => c === null)) continue;
+    const itemRaw = row[COL_ITEM];
+    if (itemRaw === null || itemRaw === undefined) continue;
+    const itemNumber = typeof itemRaw === 'number' ? itemRaw : parseInt(String(itemRaw), 10);
+    if (!Number.isFinite(itemNumber)) continue;
+
+    const unitsRaw = row[COL_UNITS] as string | null;
+    if (!unitsRaw) continue;
+    const buCodes = String(unitsRaw)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (buCodes.length === 0) continue;
+
+    const riskRaw = row[COL_RISK] as string | null;
+    const materialRisk = riskRaw ? String(riskRaw).trim() || null : null;
+
+    results.push({ itemNumber, buCodes, materialRisk });
+  }
+  return results;
+}
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -68,7 +118,7 @@ const QUESTION_BU_MAP: Record<number, string[]> = {
 router.get('/api/cycles', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await query(
-      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, description, created_at, updated_at
+      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, checklist_original_name, description, created_at, updated_at
        FROM questionnaire_cycles
        ORDER BY year DESC, id DESC`
     );
@@ -84,7 +134,7 @@ router.get('/api/cycles/:id', async (req: Request, res: Response, next: NextFunc
     const { id } = req.params;
 
     const cycleResult = await query(
-      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, description, created_at, updated_at
+      `SELECT id, name, year, status, created_by, published_at, distributed_at, closed_at, rejection_comment, checklist_file, checklist_original_name, description, created_at, updated_at
        FROM questionnaire_cycles
        WHERE id = $1`,
       [id]
@@ -243,45 +293,80 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       return;
     }
 
-    // Auto-seed question_applicability from the xlsx mapping if not yet populated
+    // Seed question_applicability — prefer the uploaded checklist XLSX, fall back to hardcoded map
     const applicabilityCheck = await query<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM question_applicability WHERE cycle_id = $1`,
       [id]
     );
     if (parseInt(applicabilityCheck.rows[0].cnt, 10) === 0) {
-      // Fetch all questions including material_risk so we can expand BU 961 rows
       const questionsResult = await query<{ id: number; item_number: number; material_risk: string | null }>(
         `SELECT id, item_number, material_risk FROM questions ORDER BY item_number`
       );
       const questionMap = new Map<number, { id: number; material_risk: string | null }>();
       for (const q of questionsResult.rows) questionMap.set(q.item_number, { id: q.id, material_risk: q.material_risk });
 
-      // Build insert rows — BU 961 gets one row per material risk when the question has risks defined
       const rows: { question_id: number; bu_code: string; material_risk: string | null }[] = [];
-      for (const [itemNumber, buCodes] of Object.entries(QUESTION_BU_MAP)) {
-        const qInfo = questionMap.get(Number(itemNumber));
-        if (!qInfo) continue;
-        const risks = qInfo.material_risk
-          ? qInfo.material_risk.split(',').map(r => r.trim()).filter(Boolean)
-          : [];
-        for (const buCode of buCodes) {
-          if (buCode === '961' && risks.length > 0) {
-            // One applicability row per material risk for BU 961
-            for (const risk of risks) {
-              rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
+
+      // Try to parse the uploaded checklist XLSX for this cycle
+      const cycleFileResult = await query<{ checklist_file: string | null }>(
+        `SELECT checklist_file FROM questionnaire_cycles WHERE id = $1`,
+        [id]
+      );
+      const checklistFile = cycleFileResult.rows[0]?.checklist_file ?? null;
+      let usedXlsx = false;
+
+      if (checklistFile) {
+        try {
+          const filePath = path.join(UPLOAD_DIR, checklistFile);
+          const xlsxRows = parseChecklistXlsx(filePath);
+          for (const { itemNumber, buCodes, materialRisk } of xlsxRows) {
+            const qInfo = questionMap.get(itemNumber);
+            if (!qInfo) continue;
+            // If the XLSX specifies a material risk, create one row per risk token
+            const risks = materialRisk
+              ? materialRisk.split('|').map(r => r.trim()).filter(Boolean)
+              : [];
+            for (const buCode of buCodes) {
+              if (buCode === '961' && risks.length > 0) {
+                for (const risk of risks) {
+                  rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
+                }
+              } else {
+                rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
+              }
             }
-          } else {
-            rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
+          }
+          usedXlsx = rows.length > 0;
+        } catch (_err) {
+          // XLSX parse failed — fall through to hardcoded map
+        }
+      }
+
+      if (!usedXlsx) {
+        // Fallback: hardcoded QUESTION_BU_MAP
+        for (const [itemNumber, buCodes] of Object.entries(QUESTION_BU_MAP)) {
+          const qInfo = questionMap.get(Number(itemNumber));
+          if (!qInfo) continue;
+          const risks = qInfo.material_risk
+            ? qInfo.material_risk.split(',').map(r => r.trim()).filter(Boolean)
+            : [];
+          for (const buCode of buCodes) {
+            if (buCode === '961' && risks.length > 0) {
+              for (const risk of risks) {
+                rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
+              }
+            } else {
+              rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
+            }
           }
         }
       }
 
       if (rows.length === 0) {
-        res.status(500).json({ error: 'Cannot distribute: no questions found in database to map.' });
+        res.status(500).json({ error: 'Cannot distribute: no applicability rows could be derived from the checklist or question map.' });
         return;
       }
 
-      // Bulk insert applicability entries
       for (const row of rows) {
         await query(
           `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by, material_risk)
@@ -409,8 +494,8 @@ router.post(
       }
 
       const result = await query(
-        `UPDATE questionnaire_cycles SET checklist_file = $1, updated_at = now() WHERE id = $2 RETURNING *`,
-        [req.file.filename, id]
+        `UPDATE questionnaire_cycles SET checklist_file = $1, checklist_original_name = $2, updated_at = now() WHERE id = $3 RETURNING *`,
+        [req.file.filename, req.file.originalname, id]
       );
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Cycle not found' });
@@ -498,8 +583,8 @@ router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next
       res.status(404).json({ error: 'Cycle not found' });
       return;
     }
-    if (cycleResult.rows[0].status !== 'pending_approval') {
-      res.status(400).json({ error: 'Comments can only be posted while the cycle is pending approval' });
+    if (!['draft', 'pending_approval'].includes(cycleResult.rows[0].status)) {
+      res.status(400).json({ error: 'Comments can only be posted on draft or pending approval cycles' });
       return;
     }
     const result = await query<{
