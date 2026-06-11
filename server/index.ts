@@ -50,6 +50,11 @@ app.use(
 );
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
+// The Core runs behind the UI's nginx (which proxies /api) — without trust proxy,
+// every request appears to come from nginx's single IP, so all users would share
+// one rate-limit bucket and collectively hit 429. Trust the one nginx hop so the
+// limiter can key on the real client (and X-User-Id, see rate-limit.ts).
+app.set('trust proxy', 1);
 app.use(generalLimiter);
 
 // ── Health (no auth) ─────────────────────────────────────────────────────────
