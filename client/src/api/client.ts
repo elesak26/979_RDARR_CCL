@@ -1,5 +1,20 @@
+import { getAccessToken, isAuthEnabled, beginLogin } from '../auth/oidc';
+
 const BASE = '/api';
 const STORAGE_KEY = 'ccl-dev-user';
+
+// When auth is on but the access token is missing/expired, kick off a fresh
+// login redirect instead of firing a request the proxy will reject (401/403).
+// Returns the Bearer header value, or null when auth is disabled.
+function ensureBearer(): string | null {
+  if (!isAuthEnabled()) return null;
+  const token = getAccessToken();
+  if (!token) {
+    void beginLogin();
+    throw new Error('Session expired — signing in again…');
+  }
+  return token;
+}
 
 function getUserId(): string | null {
   // sessionStorage for current tab; localStorage as cross-tab fallback
@@ -17,6 +32,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
+  const bearer = ensureBearer();
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
   const uid = getUserId();
   if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
@@ -29,6 +46,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 async function upload<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
+  const bearer = ensureBearer();
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
   const uid = getUserId();
   if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { method: 'POST', body: formData, headers });

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { api, setCurrentUserId, getCurrentUserId } from '../api/client';
+import { getIdentity, isAuthEnabled, logout } from '../auth/oidc';
 import type { User, UserRole } from '../types';
 
 // Lazy-loaded views
@@ -110,6 +111,7 @@ export default function App() {
   }
 
   const grouped = groupUsersByRole(allUsers);
+  const identity = isAuthEnabled() ? getIdentity() : null;
 
   return (
     <div className="layout">
@@ -160,6 +162,24 @@ export default function App() {
         >
           {theme === 'light' ? '🌙' : '☀️'}
         </button>
+
+        {/* Signed-in NBG identity (gate) + logout — distinct from the persona dropdown */}
+        {identity && (
+          <div className="toolbar__user" title="Signed in via NBG Identity">
+            <span className="toolbar__role">🔓</span>
+            <span>{identity.email || identity.preferred_username || identity.name || identity.sub}</span>
+          </div>
+        )}
+        {isAuthEnabled() && (
+          <button
+            className="toolbar__btn"
+            onClick={() => logout()}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            ⎋
+          </button>
+        )}
       </div>
 
       <div className="layout__body">

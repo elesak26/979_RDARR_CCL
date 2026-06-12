@@ -19,6 +19,7 @@ import { errorHandler } from './middleware/error-handler';
 import { generalLimiter } from './middleware/rate-limit';
 
 import healthRouter from './routes/health';
+import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import cyclesRouter from './routes/cycles';
 import questionsRouter from './routes/questions';
@@ -59,6 +60,11 @@ app.use(generalLimiter);
 
 // ── Health (no auth) ─────────────────────────────────────────────────────────
 app.use(healthRouter);
+
+// ── OIDC login endpoints (no auth — these ARE the login step) ─────────────────
+// /auth/config, /auth/exchange, /auth/logout. The UI nginx routes /auth/* to the
+// Core directly (bypassing the compliance proxy, which only gates /api).
+app.use(authRouter);
 
 // ── Auth middleware for all /api/* routes ────────────────────────────────────
 app.use('/api', authMiddleware as express.RequestHandler);

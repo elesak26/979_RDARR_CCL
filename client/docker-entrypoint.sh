@@ -1,15 +1,16 @@
 #!/bin/sh
 set -e
 
-# Substitute BACKEND_URL into the nginx config so /api/ proxies to the backend.
-# Default to the docker-compose service name when not provided (Azure sets the
-# real Core webapp URL via the BACKEND_URL env var).
+# BACKEND_URL  = the Core webapp (used by /auth/* and as the /api fallback).
+# API_UPSTREAM = where /api/ is sent. In Azure this is the compliance PROXY; when
+#                unset (local compose) it falls back to the Core directly.
 BACKEND_URL="${BACKEND_URL:-http://server:3001}"
-export BACKEND_URL
+API_UPSTREAM="${API_UPSTREAM:-$BACKEND_URL}"
+export BACKEND_URL API_UPSTREAM
 
-envsubst '${BACKEND_URL}' < /etc/nginx/conf.d/default.conf > /tmp/default.conf
+envsubst '${BACKEND_URL} ${API_UPSTREAM}' < /etc/nginx/conf.d/default.conf > /tmp/default.conf
 cat /tmp/default.conf > /etc/nginx/conf.d/default.conf
 
-echo "[entrypoint] Nginx /api/ -> $BACKEND_URL"
+echo "[entrypoint] Nginx /api/ -> $API_UPSTREAM   /auth/ -> $BACKEND_URL"
 
 exec nginx -g 'daemon off;'
