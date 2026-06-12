@@ -48,6 +48,7 @@ export default function ValidationDetail() {
   const [valAttachments, setValAttachments] = useState<Attachment[]>([]);
   const [uploadingValAttach, setUploadingValAttach] = useState(false);
   const valFileRef = useRef<HTMLInputElement | null>(null);
+  const buName = useBuNames();
 
   // cycleId can come from navigation state (from ValidationQueue) or we find it
   const stateData = location.state as { cycleId?: number } | null;
@@ -285,7 +286,6 @@ export default function ValidationDetail() {
   const isInReview = validation.status === 'in_review';
   const isReturned = validation.status === 'returned';
   const isRejected = validation.status === 'rejected';
-  const buName = useBuNames();
   const isSeniorValidator = currentUser?.role === 'Senior Validator';
   const isValidator = currentUser?.role === 'Validator';
 
