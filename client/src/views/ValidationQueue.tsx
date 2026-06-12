@@ -20,6 +20,7 @@ export default function ValidationQueue() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const statusFilter = searchParams.get('status');
+  const buName = useBuNames();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,7 +70,6 @@ export default function ValidationQueue() {
     </div>
   );
 
-  const buName = useBuNames();
   const isSeniorValidator = currentUser?.role === 'Senior Validator';
   const isValidator = currentUser?.role === 'Validator';
   const effectiveFilter = statusFilter ?? (isSeniorValidator ? 'pending_approval' : null);
