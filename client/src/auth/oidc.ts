@@ -14,6 +14,7 @@
 const TOKEN_KEY = 'ccl-access-token';
 const TOKEN_EXP_KEY = 'ccl-token-exp';
 const IDTOKEN_KEY = 'ccl-id-token';
+const PROFILE_KEY = 'ccl-identity';
 const VERIFIER_KEY = 'ccl-pkce-verifier';
 const STATE_KEY = 'ccl-oidc-state';
 
@@ -31,6 +32,23 @@ export interface Identity {
   email?: string;
   name?: string;
   preferred_username?: string;
+  given_name?: string;
+  family_name?: string;
+  [claim: string]: unknown;
+}
+
+/** Best human-readable label for an identity. */
+export function identityLabel(id: Identity | null): string {
+  if (!id) return '';
+  const full = [id.given_name, id.family_name].filter(Boolean).join(' ').trim();
+  return (
+    (id.email as string) ||
+    (id.preferred_username as string) ||
+    (id.name as string) ||
+    full ||
+    (id.sub as string) ||
+    ''
+  );
 }
 
 let cachedConfig: AuthConfig | null = null;
@@ -74,6 +92,15 @@ export function getAccessToken(): string | null {
 }
 
 export function getIdentity(): Identity | null {
+  // Prefer the userinfo profile (has email/name); fall back to id_token (sub only).
+  const stored = sessionStorage.getItem(PROFILE_KEY);
+  if (stored) {
+    try {
+      return JSON.parse(stored) as Identity;
+    } catch {
+      /* fall through */
+    }
+  }
   const idt = sessionStorage.getItem(IDTOKEN_KEY);
   if (!idt) return null;
   try {
@@ -135,6 +162,7 @@ export async function completeLoginIfCallback(): Promise<boolean> {
   const data = await res.json();
   sessionStorage.setItem(TOKEN_KEY, data.access_token);
   if (data.id_token) sessionStorage.setItem(IDTOKEN_KEY, data.id_token);
+  if (data.profile) sessionStorage.setItem(PROFILE_KEY, JSON.stringify(data.profile));
   if (data.expires_in) sessionStorage.setItem(TOKEN_EXP_KEY, String(Date.now() + Number(data.expires_in) * 1000));
   clearPkce();
   // Strip ?code&state from the address bar.
@@ -147,6 +175,7 @@ export function logout(): void {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(TOKEN_EXP_KEY);
   sessionStorage.removeItem(IDTOKEN_KEY);
+  sessionStorage.removeItem(PROFILE_KEY);
   fetch('/auth/logout' + (idToken ? `?id_token_hint=${encodeURIComponent(idToken)}` : ''))
     .then((r) => r.json())
     .then((d) => window.location.assign(d.end_session_url))

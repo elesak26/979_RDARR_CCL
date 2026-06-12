@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { api, setCurrentUserId, getCurrentUserId } from '../api/client';
-import { getIdentity, isAuthEnabled, logout } from '../auth/oidc';
+import { getIdentity, identityLabel, isAuthEnabled, logout } from '../auth/oidc';
 import type { User, UserRole } from '../types';
 
 // Lazy-loaded views
@@ -167,7 +167,7 @@ export default function App() {
         {identity && (
           <div className="toolbar__user" title="Signed in via NBG Identity">
             <span className="toolbar__role">🔓</span>
-            <span>{identity.email || identity.preferred_username || identity.name || identity.sub}</span>
+            <span>{identityLabel(identity)}</span>
           </div>
         )}
         {isAuthEnabled() && (
