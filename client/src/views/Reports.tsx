@@ -15,6 +15,7 @@ interface CycleSummary {
     total_submitted: number;
     total_validated: number;
     total_closed: number;
+    total_closed_questions: number;
     total_validations: number;
     total_actioned: number;
     total_qa_rows: number;
@@ -424,10 +425,10 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
   const validationPct = (() => {
     if (!summary) return 0;
-    const actioned = summary.counts.total_actioned ?? 0;
-    const total = summary.counts.total_qa_rows ?? 0;
+    const closed = summary.counts.total_closed_questions ?? 0;
+    const total = summary.counts.total_questions ?? 0;
     if (total === 0) return 0;
-    return Math.min(100, Math.round((actioned / total) * 100));
+    return Math.min(100, Math.round((closed / total) * 100));
   })();
 
   const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => ({
@@ -613,7 +614,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <CompletionRing
                   pct={validationPct}
                   label="Validation"
-                  sublabel={`${summary.counts.total_actioned} / ${summary.counts.total_qa_rows} validated`}
+                  sublabel={`${summary.counts.total_closed_questions} / ${summary.counts.total_questions} questions closed`}
                 />
               </div>
 

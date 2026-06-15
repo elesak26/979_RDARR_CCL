@@ -17,20 +17,22 @@ router.get(
         total_submitted: string;
         total_validated: string;
         total_closed: string;
+        total_closed_questions: string;
         total_validations: string;
         total_actioned: string;
         total_qa_rows: string;
         total_respondents: string;
       }>(
         `SELECT
-           (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)::text AS total_questions,
-           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1)::text            AS total_submitted,
-           COUNT(v.id) FILTER (WHERE v.status IN ('in_review','pending_approval'))::text              AS total_validated,
-           COUNT(v.id) FILTER (WHERE v.status = 'closed')::text                                      AS total_closed,
-           COUNT(v.id)::text                                                                          AS total_validations,
-           COUNT(v.id) FILTER (WHERE v.status IN ('closed','rejected','returned'))::text              AS total_actioned,
-           (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)::text                   AS total_qa_rows,
-           (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)::text    AS total_respondents
+           (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)::text                      AS total_questions,
+           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1)::text                                 AS total_submitted,
+           COUNT(v.id) FILTER (WHERE v.status IN ('in_review','pending_approval'))::text                                   AS total_validated,
+           COUNT(v.id) FILTER (WHERE v.status = 'closed')::text                                                            AS total_closed,
+           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed')::text           AS total_closed_questions,
+           COUNT(v.id)::text                                                                                                AS total_validations,
+           COUNT(v.id) FILTER (WHERE v.status IN ('closed','rejected','returned'))::text                                   AS total_actioned,
+           (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)::text                                         AS total_qa_rows,
+           (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)::text                          AS total_respondents
          FROM validations v
          WHERE v.cycle_id = $1`,
         [cycleId]
@@ -136,14 +138,15 @@ router.get(
       res.json({
         cycle_id: parseInt(String(cycleId), 10),
         counts: {
-          total_questions:   parseInt(counts.total_questions   ?? '0', 10),
-          total_submitted:   parseInt(counts.total_submitted   ?? '0', 10),
-          total_validated:   parseInt(counts.total_validated   ?? '0', 10),
-          total_closed:      parseInt(counts.total_closed      ?? '0', 10),
-          total_validations: parseInt(counts.total_validations ?? '0', 10),
-          total_actioned:    parseInt(counts.total_actioned    ?? '0', 10),
-          total_qa_rows:     parseInt(counts.total_qa_rows     ?? '0', 10),
-          total_respondents: parseInt(counts.total_respondents ?? '0', 10),
+          total_questions:        parseInt(counts.total_questions        ?? '0', 10),
+          total_submitted:        parseInt(counts.total_submitted        ?? '0', 10),
+          total_validated:        parseInt(counts.total_validated        ?? '0', 10),
+          total_closed:           parseInt(counts.total_closed           ?? '0', 10),
+          total_closed_questions: parseInt(counts.total_closed_questions ?? '0', 10),
+          total_validations:      parseInt(counts.total_validations      ?? '0', 10),
+          total_actioned:         parseInt(counts.total_actioned         ?? '0', 10),
+          total_qa_rows:          parseInt(counts.total_qa_rows          ?? '0', 10),
+          total_respondents:      parseInt(counts.total_respondents      ?? '0', 10),
         },
         scores_by_bcbs_principle: byBcbsResult.rows.map((r) => ({
           bcbs_principle_name:   r.bcbs_principle_name ?? null,
