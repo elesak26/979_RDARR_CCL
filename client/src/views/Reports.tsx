@@ -184,6 +184,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [summary, setSummary] = useState<CycleSummary | null>(null);
   const [thematicBuFilter, setThematicBuFilter] = useState<string>('all');
   const [thematicRows, setThematicRows] = useState<CycleSummary['scores_by_thematic_area'] | null>(null);
+  const [bcbsRows, setBcbsRows] = useState<CycleSummary['scores_by_bcbs_principle'] | null>(null);
   const [loadingCycles, setLoadingCycles] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -222,6 +223,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     setLoadingSummary(true);
     setSummary(null);
     setThematicRows(null);
+    setBcbsRows(null);
     setThematicBuFilter('all');
     setError(null);
     try {
@@ -247,7 +249,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     }
     let cancelled = false;
     api.get<CycleSummary>(`/reporting/cycle/${selectedCycleId}/summary?bu_code=${encodeURIComponent(thematicBuFilter)}`)
-      .then(data => { if (!cancelled) setThematicRows(data.scores_by_thematic_area); })
+      .then(data => {
+        if (!cancelled) {
+          setThematicRows(data.scores_by_thematic_area);
+          setBcbsRows(data.scores_by_bcbs_principle);
+        }
+      })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [thematicBuFilter, selectedCycleId]);
@@ -438,13 +445,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     return Math.min(100, Math.round((closedQuestions / total) * 100));
   })();
 
-  const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => ({
+  const barChartData = (bcbsRows ?? summary?.scores_by_bcbs_principle ?? []).map(row => ({
     name: row.bcbs_principle_name?.trim() ?? '—',
     'BU Assessment': row.avg_compliance_score !== null ? Number(Number(row.avg_compliance_score).toFixed(2)) : 0,
     'Validation': row.avg_validation_score !== null ? Number(Number(row.avg_validation_score).toFixed(2)) : 0,
   }));
 
-  const radarRows = (summary?.scores_by_thematic_area ?? [])
+  const radarRows = (thematicRows ?? summary?.scores_by_thematic_area ?? [])
     .filter(r => r.avg_validation_score !== null);
   const radarData = radarRows.map((row, i) => ({
     area: String(i + 1),
@@ -669,9 +676,80 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          {/* ── Respondent Scores by Thematic Area ── */}
+          {/* ── Respondent drilldown ── */}
           {!viewerMode && currentUser?.role !== 'Admin' && (() => {
             const submittedBus = summary.scores_by_bu.filter(bu => bu.submitted_count > 0);
+            if (submittedBus.length === 0) return null;
+            const resetAll = () => {
+              setThematicBuFilter('all');
+              setThematicRows(summary.scores_by_thematic_area);
+              setBcbsRows(null);
+            };
+            return (
+              <div style={{
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+                marginBottom: 20, overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '10px 20px', background: 'var(--panel2)',
+                  borderBottom: '1px solid var(--line)',
+                  display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                }}>
+                  <span style={{ fontSize: 15 }}>🏢</span>
+                  <strong style={{ fontSize: 13 }}>Respondent</strong>
+                  <span className="small" style={{ color: 'var(--muted)' }}>
+                    {thematicBuFilter === 'all'
+                      ? `All ${submittedBus.length} respondents — charts show aggregated data`
+                      : `Filtered to: ${buName(thematicBuFilter)} — all charts reflect this respondent`}
+                  </span>
+                  {thematicBuFilter !== 'all' && (
+                    <button
+                      className="btn"
+                      onClick={resetAll}
+                      style={{ marginLeft: 'auto', fontSize: 12, padding: '3px 10px' }}
+                    >
+                      ✕ Clear filter
+                    </button>
+                  )}
+                </div>
+                <div style={{ padding: '10px 20px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    onClick={resetAll}
+                    style={{
+                      fontSize: 12, padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
+                      border: `1px solid ${thematicBuFilter === 'all' ? 'var(--accent)' : 'var(--line)'}`,
+                      background: thematicBuFilter === 'all' ? 'var(--accent)' : 'transparent',
+                      color: thematicBuFilter === 'all' ? '#fff' : 'var(--text)',
+                      fontWeight: thematicBuFilter === 'all' ? 700 : 400,
+                      transition: 'all .15s',
+                    }}
+                  >
+                    All
+                  </button>
+                  {submittedBus.map(bu => (
+                    <button
+                      key={bu.bu_code}
+                      onClick={() => setThematicBuFilter(bu.bu_code)}
+                      style={{
+                        fontSize: 12, padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'var(--line)'}`,
+                        background: thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'transparent',
+                        color: thematicBuFilter === bu.bu_code ? '#fff' : 'var(--text)',
+                        fontWeight: thematicBuFilter === bu.bu_code ? 700 : 400,
+                        transition: 'all .15s',
+                      }}
+                    >
+                      {buName(bu.bu_code)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Respondent Scores by Thematic Area ── */}
+          {!viewerMode && currentUser?.role !== 'Admin' && (() => {
             const rows = thematicRows ?? summary.scores_by_thematic_area;
             const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
             const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
@@ -692,46 +770,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   <strong style={{ fontSize: 13 }}>Respondent Scores by Thematic Area</strong>
                   <span className="small" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>{rows.length} areas</span>
                 </div>
-                {/* Respondent filter bar */}
-                {submittedBus.length > 0 && (
-                  <div style={{
-                    padding: '10px 20px', borderBottom: '1px solid var(--line)',
-                    background: 'var(--panel)', display: 'flex', alignItems: 'center', gap: 10,
-                  }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Respondent</span>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => { setThematicBuFilter('all'); setThematicRows(summary.scores_by_thematic_area); }}
-                        style={{
-                          fontSize: 12, padding: '3px 12px', borderRadius: 20, cursor: 'pointer',
-                          border: `1px solid ${thematicBuFilter === 'all' ? 'var(--accent)' : 'var(--line)'}`,
-                          background: thematicBuFilter === 'all' ? 'var(--accent)' : 'transparent',
-                          color: thematicBuFilter === 'all' ? '#fff' : 'var(--text)',
-                          fontWeight: thematicBuFilter === 'all' ? 700 : 400,
-                          transition: 'all .15s',
-                        }}
-                      >
-                        All
-                      </button>
-                      {submittedBus.map(bu => (
-                        <button
-                          key={bu.bu_code}
-                          onClick={() => setThematicBuFilter(bu.bu_code)}
-                          style={{
-                            fontSize: 12, padding: '3px 12px', borderRadius: 20, cursor: 'pointer',
-                            border: `1px solid ${thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'var(--line)'}`,
-                            background: thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'transparent',
-                            color: thematicBuFilter === bu.bu_code ? '#fff' : 'var(--text)',
-                            fontWeight: thematicBuFilter === bu.bu_code ? 700 : 400,
-                            transition: 'all .15s',
-                          }}
-                        >
-                          {buName(bu.bu_code)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {/* Table */}
                 <table className="table">
                   <thead>
