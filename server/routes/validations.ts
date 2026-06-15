@@ -182,7 +182,7 @@ router.put(
       );
 
       if (result.rows.length === 0) {
-        res.status(400).json({ error: 'Validation not found or not in a submittable state' });
+        res.status(409).json({ error: 'Validation already completed by another user.' });
         return;
       }
       logAudit({ action: 'validation_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id } });
