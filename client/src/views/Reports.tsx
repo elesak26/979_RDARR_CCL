@@ -17,6 +17,7 @@ interface CycleSummary {
     total_closed: number;
     total_validations: number;
     total_actioned: number;
+    total_pending_responses: number;
     total_respondents: number;
   };
   scores_by_bcbs_principle: BcbsPrincipleRow[];
@@ -422,7 +423,10 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     : 0;
 
   const validationPct = summary
-    ? Math.min(100, Math.round((summary.counts.total_actioned / Math.max(summary.counts.total_validations, 1)) * 100))
+    ? Math.min(100, Math.round(
+        (summary.counts.total_actioned /
+          Math.max(summary.counts.total_validations + summary.counts.total_pending_responses, 1)) * 100
+      ))
     : 0;
 
   const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => ({
