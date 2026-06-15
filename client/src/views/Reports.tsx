@@ -422,12 +422,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     ? Math.round((summary.counts.total_submitted / Math.max(summary.counts.total_questions, 1)) * 100)
     : 0;
 
-  const validationPct = summary
-    ? Math.min(100, Math.round(
-        (summary.counts.total_actioned /
-          Math.max(summary.counts.total_validations + summary.counts.total_pending_responses, 1)) * 100
-      ))
-    : 0;
+  const validationPct = (() => {
+    if (!summary) return 0;
+    const actioned = summary.counts.total_actioned ?? 0;
+    const denominator = (summary.counts.total_validations ?? 0) + (summary.counts.total_pending_responses ?? 0);
+    if (denominator === 0) return 0;
+    return Math.min(100, Math.round((actioned / denominator) * 100));
+  })();
 
   const barChartData = (summary?.scores_by_bcbs_principle ?? []).map(row => ({
     name: row.bcbs_principle_name?.trim() ?? '—',
