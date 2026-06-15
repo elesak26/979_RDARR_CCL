@@ -128,6 +128,18 @@ export default function App() {
           onChange={e => handleUserSwitch(e.target.value)}
           title="Dev: switch user"
         >
+          {(() => {
+            const bu979 = allUsers.filter(u => u.primary_unit_code === '979' && u.role !== 'Responder');
+            return bu979.length ? (
+              <optgroup key="bu979" label="── BU 979 ──">
+                {bu979.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.display_name} · {u.role}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null;
+          })()}
           {ROLE_ORDER.map(role => {
             const roleUsers = grouped.get(role) ?? [];
             if (!roleUsers.length) return null;
@@ -192,7 +204,7 @@ export default function App() {
               <NavLink to="/assignments">📝 My Assignments</NavLink>
             )}
 
-            {hasRole(currentUser, 'Validator', 'Senior Validator') && (
+            {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') && (
               <NavLink to="/validation">✅ Validation Actions</NavLink>
             )}
 
@@ -228,7 +240,7 @@ export default function App() {
                 </>
               )}
 
-              {hasRole(currentUser, 'Validator', 'Senior Validator') ? (
+              {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') ? (
                 <>
                   <Route path="/validation" element={<ValidationQueue />} />
                   <Route path="/validation/:validationId" element={<ValidationDetail />} />

@@ -170,7 +170,7 @@ export default function Dashboard({ currentUser }: Props) {
       distributed:      { label: 'Active',           accent: 'var(--accent)', bg: 'var(--accent-light)',  clickable: true  },
       closed:           { label: 'Completed',         accent: 'var(--ok)',     bg: 'rgba(40,167,69,.08)', clickable: true  },
       published:        { label: 'Approved',          accent: 'var(--accent)', bg: 'var(--panel2)',        clickable: false },
-      pending_approval: { label: 'Pending Approval',  accent: '#7c3aed',       bg: 'rgba(124,58,237,.06)', clickable: false },
+      pending_approval: { label: 'Pending Approval',  accent: '#7c3aed',       bg: 'rgba(124,58,237,.06)', clickable: true  },
       draft:            { label: 'Draft',             accent: 'var(--muted)',  bg: 'var(--panel2)',        clickable: false },
     };
 

@@ -171,6 +171,14 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
       res.status(400).json({ error: 'name and year are required' });
       return;
     }
+    const duplicate = await query(
+      `SELECT id FROM questionnaire_cycles WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND year = $2`,
+      [name, year]
+    );
+    if (duplicate.rowCount && duplicate.rowCount > 0) {
+      res.status(409).json({ error: `A cycle named "${name.trim()}" already exists for ${year}` });
+      return;
+    }
     const result = await query(
       `INSERT INTO questionnaire_cycles (name, year, description, created_by)
        VALUES ($1, $2, $3, $4)

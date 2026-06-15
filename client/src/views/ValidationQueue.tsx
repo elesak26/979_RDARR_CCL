@@ -31,7 +31,7 @@ export default function ValidationQueue() {
         api.get<Cycle[]>('/cycles'),
       ]);
       setCurrentUser(me);
-      const activeCycles = allCycles.filter(c => c.status === 'distributed');
+      const activeCycles = allCycles.filter(c => c.status === 'distributed' || c.status === 'closed');
       setCycles(activeCycles);
 
       const enriched: EnrichedValidation[] = [];
