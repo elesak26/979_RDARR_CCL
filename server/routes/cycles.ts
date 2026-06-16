@@ -5,6 +5,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
+import { notifyRole } from '../notify';
 
 interface ChecklistRow {
   itemNumber: number;
@@ -224,6 +225,12 @@ router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: N
       return;
     }
     logAudit({ action: 'cycle_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
+    const cycle0 = result.rows[0] as { name: string };
+    notifyRole('Senior Validator',
+      `Cycle "${cycle0.name}" pending your approval`,
+      `The Validator has submitted cycle "${cycle0.name}" for approval. Please review and approve or reject it.`,
+      parseInt(String(id), 10)
+    ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
     next(err);
@@ -250,6 +257,12 @@ router.put('/api/cycles/:id/approve', async (req: Request, res: Response, next: 
       return;
     }
     logAudit({ action: 'cycle_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
+    const cycle1 = result.rows[0] as { name: string };
+    notifyRole('Validator',
+      `Cycle "${cycle1.name}" approved — ready to distribute`,
+      `The Senior Validator has approved cycle "${cycle1.name}". You can now distribute the checklist to respondents.`,
+      parseInt(String(id), 10)
+    ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
     next(err);
@@ -406,6 +419,12 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
     );
 
     logAudit({ action: 'cycle_distributed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { responses_created: insertResult.rowCount } });
+    const cycle2 = result.rows[0] as { name: string };
+    notifyRole('Validator',
+      `Cycle "${cycle2.name}" has been distributed`,
+      `Cycle "${cycle2.name}" is now in validation. Items are ready to be assessed by respondents.`,
+      parseInt(String(id), 10)
+    ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
     next(err);

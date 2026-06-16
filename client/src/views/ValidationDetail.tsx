@@ -594,24 +594,19 @@ export default function ValidationDetail() {
             <>
               <textarea
                 value={justification}
-                onChange={e => {
-                  const val = e.target.value;
-                  if ((val.match(/\n/g) ?? []).length < 20) setJustification(val);
-                }}
+                onChange={e => { if (e.target.value.length <= 1500) setJustification(e.target.value); }}
                 placeholder="Explain the rationale for your validation score…"
                 rows={4}
                 style={{
                   width: '100%', padding: '10px 12px',
-                  border: '1px solid ' + ((justification.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                  border: '1px solid ' + (justification.length >= 1500 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
                   background: 'var(--input-bg)', color: 'var(--text)',
                   fontSize: 13, lineHeight: 1.6, resize: 'vertical',
                   fontFamily: 'inherit',
                 }}
               />
-              {(justification.match(/\n/g) ?? []).length >= 20 && (
-                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
-                  You have reached the maximum allowed rows.
-                </div>
+              {justification.length >= 1500 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum row limit has been reached</div>
               )}
             </>
           )}
@@ -633,24 +628,19 @@ export default function ValidationDetail() {
             <>
               <textarea
                 value={additionalControls}
-                onChange={e => {
-                  const val = e.target.value;
-                  if ((val.match(/\n/g) ?? []).length < 20) setAdditionalControls(val);
-                }}
+                onChange={e => { if (e.target.value.length <= 1500) setAdditionalControls(e.target.value); }}
                 placeholder="Note any additional controls or action items required…"
                 rows={3}
                 style={{
                   width: '100%', padding: '10px 12px',
-                  border: '1px solid ' + ((additionalControls.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                  border: '1px solid ' + (additionalControls.length >= 1500 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
                   background: 'var(--input-bg)', color: 'var(--text)',
                   fontSize: 13, lineHeight: 1.6, resize: 'vertical',
                   fontFamily: 'inherit',
                 }}
               />
-              {(additionalControls.match(/\n/g) ?? []).length >= 20 && (
-                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
-                  You have reached the maximum allowed rows.
-                </div>
+              {additionalControls.length >= 1500 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum row limit has been reached</div>
               )}
             </>
           )}
@@ -743,25 +733,20 @@ export default function ValidationDetail() {
             <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Rejection Comment</div>
             <textarea
               value={rejectionComment}
-              onChange={e => {
-                const val = e.target.value;
-                if ((val.match(/\n/g) ?? []).length < 20) setRejectionComment(val);
-              }}
+              onChange={e => { if (e.target.value.length <= 1500) setRejectionComment(e.target.value); }}
               placeholder="Provide a reason for rejection (required when rejecting)…"
               rows={3}
               style={{
                 width: '100%', padding: '10px 12px',
-                border: '1px solid ' + ((rejectionComment.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                border: '1px solid ' + (rejectionComment.length >= 1500 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
                 background: 'var(--input-bg)', color: 'var(--text)',
                 fontSize: 13, lineHeight: 1.6, resize: 'vertical',
                 fontFamily: 'inherit',
-                marginBottom: (rejectionComment.match(/\n/g) ?? []).length >= 20 ? 4 : 12,
+                marginBottom: rejectionComment.length >= 1500 ? 4 : 12,
               }}
             />
-            {(rejectionComment.match(/\n/g) ?? []).length >= 20 && (
-              <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 12 }}>
-                You have reached the maximum allowed rows.
-              </div>
+            {rejectionComment.length >= 1500 && (
+              <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 12 }}>Maximum row limit has been reached</div>
             )}
           </div>
         )}
@@ -827,22 +812,17 @@ export default function ValidationDetail() {
               <label>Comment (optional)</label>
               <textarea
                 value={returnComment}
-                onChange={e => {
-                  const val = e.target.value;
-                  if ((val.match(/\n/g) ?? []).length < 20) setReturnComment(val);
-                }}
+                onChange={e => { if (e.target.value.length <= 1500) setReturnComment(e.target.value); }}
                 rows={3}
                 style={{
                   width: '100%', resize: 'vertical',
-                  border: '1px solid ' + ((returnComment.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'),
+                  border: '1px solid ' + (returnComment.length >= 1500 ? 'var(--danger)' : 'var(--line)'),
                 }}
                 placeholder="Explain what needs to be revised…"
                 autoFocus
               />
-              {(returnComment.match(/\n/g) ?? []).length >= 20 && (
-                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
-                  You have reached the maximum allowed rows.
-                </div>
+              {returnComment.length >= 1500 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum row limit has been reached</div>
               )}
             </div>
             {saveError && (

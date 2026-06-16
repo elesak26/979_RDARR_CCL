@@ -402,11 +402,23 @@ export default function Dashboard({ currentUser }: Props) {
             })()}
             <KpiCard
               label="Total Validations (active)"
-              value={hasActiveCycles ? validations.length : 0}
+              value={hasActiveCycles ? new Set(validations.map(v => `${v.cycle_id}:${v.question_id}`)).size : 0}
             />
             <KpiCard
               label="Closed Validations"
-              value={hasActiveCycles ? validations.filter(v => v.status === 'closed').length : 0}
+              value={(() => {
+                if (!hasActiveCycles) return 0;
+                // A question is closed only when every BU assigned to it has status='closed'
+                const byQuestion = new Map<string, { total: number; closed: number }>();
+                for (const v of validations) {
+                  const key = `${v.cycle_id}:${v.question_id}`;
+                  const entry = byQuestion.get(key) ?? { total: 0, closed: 0 };
+                  entry.total++;
+                  if (v.status === 'closed') entry.closed++;
+                  byQuestion.set(key, entry);
+                }
+                return [...byQuestion.values()].filter(e => e.total === e.closed).length;
+              })()}
             />
           </div>
 

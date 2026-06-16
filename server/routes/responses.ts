@@ -19,7 +19,18 @@ router.get(
                q.score_1_desc, q.score_2_desc, q.score_3_desc, q.score_4_desc
         FROM responses r
         JOIN questions q ON q.id = r.question_id
-        WHERE r.cycle_id = $1`;
+        JOIN questionnaire_cycles c ON c.id = r.cycle_id
+        WHERE r.cycle_id = $1
+          AND (
+            c.status <> 'closed'
+            OR EXISTS (
+              SELECT 1 FROM validations v
+              WHERE v.cycle_id = r.cycle_id
+                AND v.question_id = r.question_id
+                AND v.bu_code = r.bu_code
+                AND v.status = 'closed'
+            )
+          )`;
       const params: unknown[] = [cycleId];
 
       if (bu_code) {

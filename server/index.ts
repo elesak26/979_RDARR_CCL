@@ -28,6 +28,7 @@ import attachmentsRouter from './routes/attachments';
 import validationsRouter from './routes/validations';
 import reportingRouter from './routes/reporting';
 import auditRouter from './routes/audit';
+import notificationsRouter from './routes/notifications';
 
 const app = express();
 
@@ -78,6 +79,7 @@ app.use(attachmentsRouter);
 app.use(validationsRouter);
 app.use(reportingRouter);
 app.use(auditRouter);
+app.use(notificationsRouter);
 
 // ── Error handler ────────────────────────────────────────────────────────────
 app.use(errorHandler);

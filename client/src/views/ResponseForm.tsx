@@ -311,20 +311,20 @@ export default function ResponseForm({ currentUser }: Props) {
               <>
                 <textarea
                   value={comments}
-                  onChange={e => {
-                    const val = e.target.value;
-                    if ((val.match(/\n/g) ?? []).length < 20) setComments(val);
-                  }}
+                  onChange={e => { if (e.target.value.length <= 1500) setComments(e.target.value); }}
                   placeholder="Describe your compliance level, evidence, and any relevant notes…"
                   rows={5}
                   style={{
                     width: '100%', padding: '10px 12px',
-                    border: '1px solid ' + ((comments.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                    border: '1px solid ' + (comments.length >= 1500 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
                     background: 'var(--input-bg)', color: 'var(--text)',
                     fontSize: 13, lineHeight: 1.6, resize: 'vertical',
                     fontFamily: 'inherit',
                   }}
                 />
+                {comments.length >= 1500 && (
+                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum row limit has been reached</div>
+                )}
                 {(comments.match(/\n/g) ?? []).length >= 20 && (
                   <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
                     You have reached the maximum allowed rows.

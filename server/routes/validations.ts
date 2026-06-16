@@ -36,7 +36,9 @@ router.get(
            q.bcbs_principle_number, q.bcbs_principle_name
          FROM validations v
          JOIN questions q ON q.id = v.question_id
+         JOIN questionnaire_cycles c ON c.id = v.cycle_id
          WHERE v.cycle_id = $1
+           AND (c.status <> 'closed' OR v.status = 'closed')
          ORDER BY q.item_number, v.bu_code`,
         [cycleId]
       );

@@ -1,8 +1,148 @@
-import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { api, setCurrentUserId, getCurrentUserId } from '../api/client';
 import { getIdentity, identityLabel, isAuthEnabled, logout } from '../auth/oidc';
 import type { User, UserRole } from '../types';
+
+// ── In-app notifications ──────────────────────────────────────────────────────
+interface AppNotification {
+  id: number;
+  title: string;
+  body: string;
+  cycle_id: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+function NotificationBell({ userId }: { userId: string | undefined }) {
+  const [items, setItems] = useState<AppNotification[]>([]);
+  const [open, setOpen] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  const fetchNotifications = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const data = await api.get<AppNotification[]>('/notifications');
+      setItems(data);
+    } catch {
+      // silent — don't disrupt UI on polling failure
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    fetchNotifications();
+    const iv = setInterval(fetchNotifications, 30_000);
+    return () => clearInterval(iv);
+  }, [fetchNotifications]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const unread = items.filter(n => !n.is_read).length;
+
+  async function markRead(id: number) {
+    try {
+      await api.put(`/notifications/${id}/read`);
+      setItems(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    } catch { /* ignore */ }
+  }
+
+  async function markAllRead() {
+    try {
+      await api.put('/notifications/read-all');
+      setItems(prev => prev.map(n => ({ ...n, is_read: true })));
+    } catch { /* ignore */ }
+  }
+
+  if (!userId) return null;
+
+  return (
+    <div ref={dropRef} style={{ position: 'relative' }}>
+      <button
+        className="toolbar__btn"
+        onClick={() => setOpen(o => !o)}
+        title="Notifications"
+        aria-label="Notifications"
+        style={{ position: 'relative' }}
+      >
+        🔔
+        {unread > 0 && (
+          <span style={{
+            position: 'absolute', top: 4, right: 4,
+            background: '#e03131', color: '#fff',
+            borderRadius: '50%', fontSize: 10, fontWeight: 700,
+            minWidth: 16, height: 16, lineHeight: '16px',
+            textAlign: 'center', padding: '0 3px',
+          }}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)',
+          width: 340, maxHeight: 420, overflowY: 'auto',
+          background: 'var(--bg)', border: '1px solid var(--border)',
+          borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,.25)',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 14px', borderBottom: '1px solid var(--border)',
+          }}>
+            <span style={{ fontWeight: 700, fontSize: 13 }}>Notifications</span>
+            {unread > 0 && (
+              <button
+                className="btn"
+                style={{ fontSize: 11, padding: '2px 8px' }}
+                onClick={markAllRead}
+              >
+                Mark all read
+              </button>
+            )}
+          </div>
+
+          {items.length === 0 ? (
+            <div style={{ padding: '20px 14px', color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
+              No notifications
+            </div>
+          ) : items.map(n => (
+            <div
+              key={n.id}
+              onClick={() => { if (!n.is_read) markRead(n.id); }}
+              style={{
+                padding: '10px 14px',
+                borderBottom: '1px solid var(--border)',
+                background: n.is_read ? 'transparent' : 'rgba(0,163,176,.08)',
+                cursor: n.is_read ? 'default' : 'pointer',
+              }}
+            >
+              <div style={{ fontWeight: n.is_read ? 400 : 700, fontSize: 13, marginBottom: 3 }}>
+                {n.title}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.4 }}>
+                {n.body}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, opacity: 0.7 }}>
+                {new Date(n.created_at).toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Lazy-loaded views
 const Dashboard = lazy(() => import('../views/Dashboard'));
@@ -128,18 +268,6 @@ export default function App() {
           onChange={e => handleUserSwitch(e.target.value)}
           title="Dev: switch user"
         >
-          {(() => {
-            const bu979 = allUsers.filter(u => u.primary_unit_code === '979' && u.role !== 'Responder');
-            return bu979.length ? (
-              <optgroup key="bu979" label="── BU 979 ──">
-                {bu979.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.display_name} · {u.role}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null;
-          })()}
           {ROLE_ORDER.map(role => {
             const roleUsers = grouped.get(role) ?? [];
             if (!roleUsers.length) return null;
@@ -164,6 +292,9 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* Notification bell */}
+        <NotificationBell userId={currentUser?.id} />
 
         {/* Theme toggle */}
         <button
@@ -204,7 +335,7 @@ export default function App() {
               <NavLink to="/assignments">📝 My Assignments</NavLink>
             )}
 
-            {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') && (
+            {hasRole(currentUser, 'Validator', 'Senior Validator') && (
               <NavLink to="/validation">✅ Validation Actions</NavLink>
             )}
 
