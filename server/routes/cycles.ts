@@ -610,8 +610,8 @@ router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next
       res.status(404).json({ error: 'Cycle not found' });
       return;
     }
-    if (!['draft', 'pending_approval', 'published'].includes(cycleResult.rows[0].status)) {
-      res.status(400).json({ error: 'Comments can only be posted on draft, pending approval, or approved cycles' });
+    if (!['draft', 'pending_approval'].includes(cycleResult.rows[0].status)) {
+      res.status(400).json({ error: 'Comments can only be posted on draft or pending approval cycles' });
       return;
     }
     const result = await query<{
