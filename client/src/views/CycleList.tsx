@@ -384,7 +384,7 @@ export default function CycleList({ currentUser }: Props) {
                         </>
                       )}
 
-                      {/* Validator on pending_approval: checklist download + comments */}
+                      {/* Validator on pending_approval: checklist download + add comment + comments toggle */}
                       {c.status === 'pending_approval' && role === 'Validator' && (
                         <>
                           {c.checklist_file && (
@@ -405,8 +405,25 @@ export default function CycleList({ currentUser }: Props) {
                               </span>
                             </div>
                           )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <input
+                              type="text"
+                              value={commentInput[c.id] ?? ''}
+                              onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter') handlePostComment(c.id); }}
+                              placeholder="Add a comment…"
+                              style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}
+                            />
+                            <button
+                              className="btn"
+                              onClick={() => handlePostComment(c.id)}
+                              disabled={postingComment === c.id || !(commentInput[c.id] ?? '').trim()}
+                            >
+                              {postingComment === c.id ? 'Posting…' : 'Add Comment'}
+                            </button>
+                          </div>
                           <button className="btn" onClick={() => toggleComments(c.id)}>
-                            {expandedComments.has(c.id) ? 'Hide Comments' : 'Comments'}
+                            {expandedComments.has(c.id) ? 'Hide Comments' : `Comments${(comments[c.id] ?? []).length ? ` (${(comments[c.id] ?? []).length})` : ''}`}
                           </button>
                         </>
                       )}
@@ -435,6 +452,26 @@ export default function CycleList({ currentUser }: Props) {
                               </span>
                             </div>
                           )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <input
+                              type="text"
+                              value={commentInput[c.id] ?? ''}
+                              onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter') handlePostComment(c.id); }}
+                              placeholder="Add a comment…"
+                              style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}
+                            />
+                            <button
+                              className="btn"
+                              onClick={() => handlePostComment(c.id)}
+                              disabled={postingComment === c.id || !(commentInput[c.id] ?? '').trim()}
+                            >
+                              {postingComment === c.id ? 'Posting…' : 'Add Comment'}
+                            </button>
+                          </div>
+                          <button className="btn" onClick={() => toggleComments(c.id)}>
+                            {expandedComments.has(c.id) ? 'Hide Comments' : `Comments${(comments[c.id] ?? []).length ? ` (${(comments[c.id] ?? []).length})` : ''}`}
+                          </button>
                         </>
                       )}
 
