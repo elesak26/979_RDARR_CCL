@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { User, Cycle, Response, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
@@ -33,6 +34,9 @@ interface ItemDraft {
 }
 
 export default function MyAssignments({ currentUser }: Props) {
+  const [searchParams] = useSearchParams();
+  const urlCycleId = searchParams.get('cycle_id') ? Number(searchParams.get('cycle_id')) : null;
+
   const [responses, setResponses] = useState<Response[]>([]);
   const [activeCycles, setActiveCycles] = useState<Cycle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,8 +55,8 @@ export default function MyAssignments({ currentUser }: Props) {
   // Track which cycle IDs were submitted successfully this session
   const [submittedCycles, setSubmittedCycles] = useState<Set<number>>(new Set());
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'submitted'>('all');
-  // Which cycle the user is currently working on
-  const [selectedCycleId, setSelectedCycleId] = useState<number | null>(null);
+  // Which cycle the user is currently working on (URL param takes priority on first load)
+  const [selectedCycleId, setSelectedCycleId] = useState<number | null>(urlCycleId);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,8 +72,8 @@ export default function MyAssignments({ currentUser }: Props) {
         return;
       }
 
-      // Default to first cycle if none selected yet
-      setSelectedCycleId(prev => prev ?? distributed[0].id);
+      // Default to URL-specified cycle, then first available
+      setSelectedCycleId(prev => prev ?? urlCycleId ?? distributed[0].id);
 
       const buCode = currentUser.primary_unit_code;
       const perCycle = await Promise.all(

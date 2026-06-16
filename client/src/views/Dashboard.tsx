@@ -115,9 +115,6 @@ export default function Dashboard({ currentUser }: Props) {
   const filteredValidations = selectedCycleId !== null
     ? validations.filter(v => v.cycle_id === selectedCycleId)
     : validations;
-  const filteredResponses = selectedCycleId !== null
-    ? responses.filter(r => r.cycle_id === selectedCycleId)
-    : responses;
 
   const pendingCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'pending').length : 0;
   const inReviewCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'in_review').length : 0;
@@ -557,35 +554,67 @@ export default function Dashboard({ currentUser }: Props) {
       {/* RESPONDER */}
       {role === 'Responder' && (
         <>
-          {hasActiveCycles && <CycleSelector />}
           {(() => {
-            const inProgressCount = hasActiveCycles ? filteredResponses.filter(r => r.status === 'draft' || r.status === 'in_progress').length : 0;
-            const submittedCount = hasActiveCycles ? filteredResponses.filter(r => r.status === 'submitted').length : 0;
-            const assignedCount = hasActiveCycles ? filteredResponses.length : 0;
+            // Always scope to a specific cycle — never "All"
+            const respCycleId = selectedCycleId ?? activeCycles[0]?.id ?? null;
+            const respResponses = respCycleId !== null
+              ? responses.filter(r => r.cycle_id === respCycleId)
+              : responses;
+            const inProgressCount = hasActiveCycles ? respResponses.filter(r => r.status === 'draft' || r.status === 'in_progress').length : 0;
+            const submittedCount = hasActiveCycles ? respResponses.filter(r => r.status === 'submitted').length : 0;
+            const assignedCount = hasActiveCycles ? respResponses.length : 0;
+            const assignmentsLink = `/assignments${respCycleId ? `?cycle_id=${respCycleId}` : ''}`;
+
             return (
-              <div className="kpi">
-                <KpiCard
-                  label="Assigned Questions"
-                  value={assignedCount}
-                  onClick={assignedCount > 0 ? () => navigate('/assignments') : undefined}
-                />
-                <KpiCard
-                  label={<span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>In Progress <ActionBadge /></span>}
-                  value={<span style={{ color: 'var(--warn)' }}>{inProgressCount}</span>}
-                  onClick={inProgressCount > 0 ? () => navigate('/assignments') : undefined}
-                  style={{ borderTop: '3px solid var(--warn)', background: 'rgba(255,193,7,.06)' }}
-                />
-                <KpiCard
-                  label="Submitted"
-                  value={<span style={{ color: 'var(--ok)' }}>{submittedCount}</span>}
-                  onClick={submittedCount > 0 ? () => navigate('/assignments') : undefined}
-                />
-              </div>
+              <>
+                {/* Cycle selector — no "All" option for Responder */}
+                {hasActiveCycles && activeCycles.length > 1 && (
+                  <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span className="small" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>Active Cycle:</span>
+                    <select
+                      value={respCycleId ?? ''}
+                      onChange={e => setSelectedCycleId(Number(e.target.value))}
+                      style={{ fontWeight: 500, minWidth: 220 }}
+                    >
+                      {activeCycles.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} · {c.year}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {hasActiveCycles && activeCycles.length === 1 && (
+                  <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span className="small" style={{ fontWeight: 600 }}>Active Cycle:</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span className="small"><strong>{activeCycles[0].name}</strong> · {activeCycles[0].year}</span>
+                      <WorkflowBadge status={activeCycles[0].status} size="sm" />
+                    </span>
+                  </div>
+                )}
+                <div className="kpi">
+                  <KpiCard
+                    label="Assigned Questions"
+                    value={assignedCount}
+                    onClick={assignedCount > 0 ? () => navigate(assignmentsLink) : undefined}
+                  />
+                  <KpiCard
+                    label={<span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>In Progress <ActionBadge /></span>}
+                    value={<span style={{ color: 'var(--warn)' }}>{inProgressCount}</span>}
+                    onClick={inProgressCount > 0 ? () => navigate(assignmentsLink) : undefined}
+                    style={{ borderTop: '3px solid var(--warn)', background: 'rgba(255,193,7,.06)' }}
+                  />
+                  <KpiCard
+                    label="Submitted"
+                    value={<span style={{ color: 'var(--ok)' }}>{submittedCount}</span>}
+                    onClick={submittedCount > 0 ? () => navigate(assignmentsLink) : undefined}
+                  />
+                </div>
+                <div style={{ marginTop: 16 }}>
+                  <Link to={assignmentsLink}><button className="btn primary">My Assignments →</button></Link>
+                </div>
+              </>
             );
           })()}
-          <div style={{ marginTop: 16 }}>
-            <Link to="/assignments"><button className="btn primary">My Assignments →</button></Link>
-          </div>
         </>
       )}
 
