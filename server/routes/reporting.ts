@@ -28,7 +28,16 @@ router.get(
            (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1)::text                                 AS total_submitted,
            COUNT(v.id) FILTER (WHERE v.status IN ('in_review','pending_approval'))::text                                   AS total_validated,
            COUNT(v.id) FILTER (WHERE v.status = 'closed')::text                                                            AS total_closed,
-           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed')::text           AS total_closed_questions,
+           (SELECT COUNT(DISTINCT qa.question_id)
+            FROM question_applicability qa
+            WHERE qa.cycle_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM question_applicability qa2
+              LEFT JOIN validations v
+                ON v.cycle_id = qa2.cycle_id AND v.question_id = qa2.question_id AND v.bu_code = qa2.bu_code
+              WHERE qa2.cycle_id = qa.cycle_id AND qa2.question_id = qa.question_id
+                AND (v.id IS NULL OR v.status <> 'closed')
+            ))::text                                                                                                        AS total_closed_questions,
            COUNT(v.id)::text                                                                                                AS total_validations,
            COUNT(v.id) FILTER (WHERE v.status IN ('closed','rejected','returned'))::text                                   AS total_actioned,
            (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)::text                                         AS total_qa_rows,
@@ -60,6 +69,29 @@ router.get(
          GROUP BY q.thematic_area
          ORDER BY q.thematic_area`,
         byAreaParams
+      );
+
+      // ── Scores by thematic area × BU (drill-down rows) ──────────────────
+      const byAreaByBuResult = await query<{
+        thematic_area: string;
+        bu_code: string;
+        avg_compliance_score: string;
+        avg_validation_score: string;
+        response_count: string;
+      }>(
+        `SELECT
+           q.thematic_area,
+           r.bu_code,
+           ROUND(AVG(r.compliance_score), 2)::text  AS avg_compliance_score,
+           ROUND(AVG(v.validation_score), 2)::text  AS avg_validation_score,
+           COUNT(DISTINCT q.id)::text               AS response_count
+         FROM responses r
+         JOIN questions q ON q.id = r.question_id
+         LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+         WHERE r.cycle_id = $1 AND r.status = 'submitted'
+         GROUP BY q.thematic_area, r.bu_code
+         ORDER BY q.thematic_area, r.bu_code`,
+        [cycleId]
       );
 
       // ── Scores by BCBS 239 Principle ─────────────────────────────────────
@@ -156,6 +188,13 @@ router.get(
         })),
         scores_by_thematic_area: byAreaResult.rows.map((r) => ({
           thematic_area:        r.thematic_area,
+          avg_compliance_score: r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
+          avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
+          response_count:       parseInt(r.response_count, 10),
+        })),
+        scores_by_thematic_area_by_bu: byAreaByBuResult.rows.map((r) => ({
+          thematic_area:        r.thematic_area,
+          bu_code:              r.bu_code,
           avg_compliance_score: r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
           avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
           response_count:       parseInt(r.response_count, 10),

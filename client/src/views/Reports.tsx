@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, getCurrentUserId } from '../api/client';
 import type { Cycle, User } from '../types';
 import { useBuNames } from '../hooks/useBuNames';
@@ -7,6 +7,114 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
 } from 'recharts';
+
+async function exportToPdf(el: HTMLElement, filename: string) {
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  // Resolve CSS custom properties so html2canvas (which runs outside the cascade) sees real values
+  const style = getComputedStyle(document.documentElement);
+  const varMap: Record<string, string> = {};
+  const CSS_VARS = [
+    '--text', '--muted', '--panel', '--panel2', '--line', '--accent', '--accent-dark',
+    '--accent-light', '--ok', '--warn', '--danger', '--chip', '--hover-bg',
+    '--shadow', '--shadow-md', '--radius', '--radius2',
+  ];
+  CSS_VARS.forEach(v => { varMap[v] = style.getPropertyValue(v).trim(); });
+
+  // Walk the subtree and replace var() references with computed values in inline styles & SVG attrs
+  function patchNode(node: Element) {
+    // Inline styles
+    const inlineStyle = (node as HTMLElement).style;
+    if (inlineStyle) {
+      Array.from(inlineStyle).forEach(prop => {
+        const val = inlineStyle.getPropertyValue(prop);
+        if (val.includes('var(')) {
+          const resolved = val.replace(/var\((--[\w-]+)\)/g, (_, v) => varMap[v] ?? getComputedStyle(node).getPropertyValue(v).trim());
+          inlineStyle.setProperty(prop, resolved);
+        }
+      });
+    }
+    // SVG presentation attributes
+    ['fill', 'stroke', 'color'].forEach(attr => {
+      const val = node.getAttribute(attr);
+      if (val && val.includes('var(')) {
+        const resolved = val.replace(/var\((--[\w-]+)\)/g, (_, v) => varMap[v] ?? getComputedStyle(node).getPropertyValue(v).trim());
+        node.setAttribute(attr, resolved);
+      }
+    });
+    Array.from(node.children).forEach(patchNode);
+  }
+
+  // Clone so we don't mutate live DOM
+  const clone = el.cloneNode(true) as HTMLElement;
+  clone.style.cssText = `
+    position: fixed; top: 0; left: 0;
+    width: ${el.offsetWidth}px;
+    background: #ffffff; color: #111;
+    padding: 24px; box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    z-index: -9999; pointer-events: none;
+  `;
+
+  // Apply computed styles from the live root so CSS vars resolve inside clone too
+  document.documentElement.style.setProperty('--text', varMap['--text'] || '#111');
+  document.documentElement.style.setProperty('--muted', varMap['--muted'] || '#666');
+  document.documentElement.style.setProperty('--panel', varMap['--panel'] || '#fff');
+  document.documentElement.style.setProperty('--panel2', varMap['--panel2'] || '#f5f5f5');
+  document.documentElement.style.setProperty('--line', varMap['--line'] || '#e0e0e0');
+
+  patchNode(clone);
+  document.body.appendChild(clone);
+
+  try {
+    const canvas = await html2canvas(clone, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 36;
+    const contentW = pageW - margin * 2;
+    const imgH = (canvas.height / canvas.width) * contentW;
+
+    let yOffset = 0;
+    while (yOffset < imgH) {
+      if (yOffset > 0) pdf.addPage();
+      pdf.addImage(
+        imgData, 'PNG',
+        margin,
+        margin - yOffset,
+        contentW,
+        imgH,
+      );
+      // Clip: draw a white rectangle over the portion that bleeds beyond the page
+      pdf.setFillColor(255, 255, 255);
+      pdf.rect(0, pageH - margin, pageW, margin + 10, 'F');
+      pdf.rect(0, 0, pageW, margin, 'F');
+      yOffset += pageH - margin * 2;
+    }
+
+    pdf.save(filename);
+  } finally {
+    document.body.removeChild(clone);
+  }
+}
+
+interface ThematicAreaByBuRow {
+  thematic_area: string;
+  bu_code: string;
+  avg_compliance_score: number | null;
+  avg_validation_score: number | null;
+  response_count: number;
+}
 
 interface CycleSummary {
   cycle_id: number;
@@ -23,6 +131,7 @@ interface CycleSummary {
   };
   scores_by_bcbs_principle: BcbsPrincipleRow[];
   scores_by_thematic_area: ThematicAreaRow[];
+  scores_by_thematic_area_by_bu: ThematicAreaByBuRow[];
   scores_by_bu: BURow[];
   validation_vs_compliance: ValidationRow[];
 }
@@ -200,6 +309,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [auditActorRole, setAuditActorRole] = useState<string>('All');
   const [auditDateFrom, setAuditDateFrom] = useState<string>('');
   const [auditDateTo, setAuditDateTo] = useState<string>('');
+  const [exporting, setExporting] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const loadCycles = useCallback(async () => {
     setLoadingCycles(true);
@@ -261,6 +372,17 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
   const selectedCycle = cycles.find(c => c.id === selectedCycleId);
   const buName = useBuNames();
+
+  const handleExportPdf = useCallback(async () => {
+    if (!reportRef.current || !selectedCycle) return;
+    setExporting(true);
+    try {
+      const filename = `CCL_Report_${selectedCycle.name.replace(/\s+/g, '_')}_${selectedCycle.year}.pdf`;
+      await exportToPdf(reportRef.current, filename);
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedCycle]);
 
   const buildAuditParams = useCallback(() => {
     const params = new URLSearchParams();
@@ -426,23 +548,17 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
   // ── Derived data ────────────────────────────────────────────────────────────
 
+  const submittedBus = summary?.scores_by_bu.filter(bu => bu.submitted_count > 0) ?? [];
+
   const submissionPct = summary
     ? Math.round((summary.counts.total_submitted / Math.max(summary.counts.total_questions, 1)) * 100)
-    : 0;
-
-  const closedQuestions = summary
-    ? new Set(
-        summary.validation_vs_compliance
-          .filter(r => r.validation_status === 'closed')
-          .map(r => r.question_id)
-      ).size
     : 0;
 
   const validationPct = (() => {
     if (!summary) return 0;
     const total = summary.counts.total_questions ?? 0;
     if (total === 0) return 0;
-    return Math.min(100, Math.round((closedQuestions / total) * 100));
+    return Math.min(100, Math.round((summary.counts.total_closed_questions / total) * 100));
   })();
 
   const barChartData = (bcbsRows ?? summary?.scores_by_bcbs_principle ?? []).map(row => ({
@@ -450,6 +566,16 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     'BU Assessment': row.avg_compliance_score !== null ? Number(Number(row.avg_compliance_score).toFixed(2)) : 0,
     'Validation': row.avg_validation_score !== null ? Number(Number(row.avg_validation_score).toFixed(2)) : 0,
   }));
+
+  const handleBuFilterChange = (buCode: string) => {
+    if (buCode === 'all') {
+      setThematicBuFilter('all');
+      setBcbsRows(null);
+      if (summary) setThematicRows(summary.scores_by_thematic_area);
+    } else {
+      setThematicBuFilter(buCode);
+    }
+  };
 
   const radarRows = (thematicRows ?? summary?.scores_by_thematic_area ?? [])
     .filter(r => r.avg_validation_score !== null);
@@ -461,7 +587,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   }));
 
   return (
-    <div>
+    <div ref={reportRef}>
       {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <div>
@@ -480,22 +606,23 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
         </div>
-        {!embedded && currentUser?.role !== 'Admin' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label className="small" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>Cycle</label>
-            <select
-              value={selectedCycleId ?? ''}
-              onChange={e => setSelectedCycleId(Number(e.target.value))}
-              style={{ minWidth: 220, fontWeight: 500 }}
-            >
-              <option value="" disabled>Select a cycle…</option>
-              {cycles.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.year}) — {c.status}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        {!embedded && currentUser?.role === 'Admin' && (() => {
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {!embedded && currentUser?.role !== 'Admin' && (
+            <>
+              <label className="small" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>Cycle</label>
+              <select
+                value={selectedCycleId ?? ''}
+                onChange={e => setSelectedCycleId(Number(e.target.value))}
+                style={{ minWidth: 220, fontWeight: 500 }}
+              >
+                <option value="" disabled>Select a cycle…</option>
+                {cycles.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.year}) — {c.status}</option>
+                ))}
+              </select>
+            </>
+          )}
+          {!embedded && currentUser?.role === 'Admin' && (() => {
           const availableYears = [...new Set(cycles.map(c => c.year))].sort((a, b) => b - a);
           const effectiveYear = selectedYear ?? availableYears[0] ?? null;
           return availableYears.length > 0 ? (
@@ -527,6 +654,21 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           ) : null;
         })()}
+          {summary && (
+            <button
+              className="btn"
+              onClick={handleExportPdf}
+              disabled={exporting}
+              title="Export visible report to PDF"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              {exporting ? 'Exporting…' : 'Export PDF'}
+            </button>
+          )}
+        </div>
       </div>
 
       {!selectedCycleId && (
@@ -628,7 +770,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <CompletionRing
                   pct={validationPct}
                   label="Validation"
-                  sublabel={`${closedQuestions} / ${summary.counts.total_questions} questions closed`}
+                  sublabel={`${summary.counts.total_closed_questions} / ${summary.counts.total_questions} questions closed`}
                 />
               </div>
 
@@ -641,7 +783,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   { label: 'Total Questions', value: summary.counts.total_questions, color: 'var(--muted)', icon: '📋' },
                   { label: 'Sent for Evaluation', value: summary.counts.total_submitted, color: 'var(--accent)', icon: '📨' },
                   { label: 'In Validation', value: summary.counts.total_validated, color: 'var(--warn)', icon: '🔍' },
-                  { label: 'Closed', value: summary.counts.total_closed, color: 'var(--ok)', icon: '✅' },
+                  { label: 'Closed', value: summary.counts.total_closed_questions, color: 'var(--ok)', icon: '✅' },
                 ].map(card => (
                   <div key={card.label} style={{
                     flex: '1 1 110px',
@@ -676,77 +818,39 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          {/* ── Respondent drilldown ── */}
-          {!viewerMode && currentUser?.role !== 'Admin' && (() => {
-            const submittedBus = summary.scores_by_bu.filter(bu => bu.submitted_count > 0);
-            if (submittedBus.length === 0) return null;
-            const resetAll = () => {
-              setThematicBuFilter('all');
-              setThematicRows(summary.scores_by_thematic_area);
-              setBcbsRows(null);
-            };
-            return (
-              <div style={{
-                background: 'var(--panel)', border: '1px solid var(--line)',
-                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
-                marginBottom: 20, overflow: 'hidden',
-              }}>
-                <div style={{
-                  padding: '10px 20px', background: 'var(--panel2)',
-                  borderBottom: '1px solid var(--line)',
-                  display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-                }}>
-                  <span style={{ fontSize: 15 }}>🏢</span>
-                  <strong style={{ fontSize: 13 }}>Respondent</strong>
-                  <span className="small" style={{ color: 'var(--muted)' }}>
-                    {thematicBuFilter === 'all'
-                      ? `All ${submittedBus.length} respondents — charts show aggregated data`
-                      : `Filtered to: ${buName(thematicBuFilter)} — all charts reflect this respondent`}
-                  </span>
-                  {thematicBuFilter !== 'all' && (
-                    <button
-                      className="btn"
-                      onClick={resetAll}
-                      style={{ marginLeft: 'auto', fontSize: 12, padding: '3px 10px' }}
-                    >
-                      ✕ Clear filter
-                    </button>
-                  )}
-                </div>
-                <div style={{ padding: '10px 20px', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button
-                    onClick={resetAll}
-                    style={{
-                      fontSize: 12, padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
-                      border: `1px solid ${thematicBuFilter === 'all' ? 'var(--accent)' : 'var(--line)'}`,
-                      background: thematicBuFilter === 'all' ? 'var(--accent)' : 'transparent',
-                      color: thematicBuFilter === 'all' ? '#fff' : 'var(--text)',
-                      fontWeight: thematicBuFilter === 'all' ? 700 : 400,
-                      transition: 'all .15s',
-                    }}
-                  >
-                    All
-                  </button>
-                  {submittedBus.map(bu => (
-                    <button
-                      key={bu.bu_code}
-                      onClick={() => setThematicBuFilter(bu.bu_code)}
-                      style={{
-                        fontSize: 12, padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
-                        border: `1px solid ${thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'var(--line)'}`,
-                        background: thematicBuFilter === bu.bu_code ? 'var(--accent)' : 'transparent',
-                        color: thematicBuFilter === bu.bu_code ? '#fff' : 'var(--text)',
-                        fontWeight: thematicBuFilter === bu.bu_code ? 700 : 400,
-                        transition: 'all .15s',
-                      }}
-                    >
-                      {buName(bu.bu_code)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          {/* ── Shared BU filter bar ── */}
+          {!viewerMode && currentUser?.role !== 'Admin' && submittedBus.length > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '10px 16px', marginBottom: 16,
+              background: 'var(--panel)', border: '1px solid var(--line)',
+              borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>🏢 Filter by respondent</span>
+              <select
+                value={thematicBuFilter}
+                onChange={e => handleBuFilterChange(e.target.value)}
+                style={{ fontWeight: 500, fontSize: 13, minWidth: 220 }}
+              >
+                <option value="all">All respondents</option>
+                {submittedBus.map(bu => (
+                  <option key={bu.bu_code} value={bu.bu_code}>{buName(bu.bu_code)}</option>
+                ))}
+              </select>
+              {thematicBuFilter !== 'all' && (
+                <button
+                  className="btn"
+                  onClick={() => handleBuFilterChange('all')}
+                  style={{ fontSize: 12, padding: '3px 10px' }}
+                >
+                  ✕ Clear
+                </button>
+              )}
+              <span className="small" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>
+                Applies to all 3 charts below
+              </span>
+            </div>
+          )}
 
           {/* ── Respondent Scores by Thematic Area ── */}
           {!viewerMode && currentUser?.role !== 'Admin' && (() => {
@@ -768,56 +872,62 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 }}>
                   <span style={{ fontSize: 15 }}>🗂️</span>
                   <strong style={{ fontSize: 13 }}>Respondent Scores by Thematic Area</strong>
-                  <span className="small" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>{rows.length} areas</span>
-                </div>
-                {/* Table */}
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Thematic Area</th>
-                      <th style={{ textAlign: 'right', width: 80 }}>Questions</th>
-                      <th style={{ width: 220 }}>Avg Compliance</th>
-                      <th style={{ width: 220 }}>Avg Validation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.length === 0 && (
-                      <tr><td colSpan={4} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
-                    )}
-                    {rows.map(row => {
-                      const compScore = row.avg_compliance_score;
-                      const rowBg = compScore !== null ? `${scoreColor(compScore)}08` : undefined;
-                      return (
-                        <tr key={row.thematic_area} style={{ background: rowBg }}>
-                          <td style={{ fontWeight: 500, fontSize: 13 }}>{row.thematic_area.trim()}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 13 }}>{row.response_count}</td>
-                          <td><ScoreBar value={row.avg_compliance_score} /></td>
-                          <td>
-                            {row.avg_validation_score !== null
-                              ? <ScoreBar value={row.avg_validation_score} />
-                              : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
-                            }
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  {rows.length > 0 && (
-                    <tfoot>
-                      <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--panel2)' }}>
-                        <td style={{ fontWeight: 700, fontSize: 13 }}>Overall Average</td>
-                        <td />
-                        <td><ScoreBar value={totalComp} /></td>
-                        <td>
-                          {totalVal !== null
-                            ? <ScoreBar value={totalVal} />
-                            : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
-                          }
-                        </td>
-                      </tr>
-                    </tfoot>
+                  {thematicBuFilter !== 'all' && (
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
+                      {buName(thematicBuFilter)}
+                    </span>
                   )}
-                </table>
+                </div>
+                {/* Thematic area table */}
+                <div style={{ overflow: 'auto' }}>
+                    <table className="table" style={{ marginBottom: 0 }}>
+                      <thead>
+                        <tr>
+                          <th>Thematic Area</th>
+                          <th style={{ textAlign: 'right', width: 80 }}>Questions</th>
+                          <th style={{ width: 220 }}>Avg Compliance</th>
+                          <th style={{ width: 220 }}>Avg Validation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.length === 0 && (
+                          <tr><td colSpan={4} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
+                        )}
+                        {rows.map(row => {
+                          const compScore = row.avg_compliance_score;
+                          const rowBg = compScore !== null ? `${scoreColor(compScore)}08` : undefined;
+                          return (
+                            <tr key={row.thematic_area} style={{ background: rowBg }}>
+                              <td style={{ fontWeight: 500, fontSize: 13 }}>{row.thematic_area.trim()}</td>
+                              <td style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 13 }}>{row.response_count}</td>
+                              <td><ScoreBar value={row.avg_compliance_score} /></td>
+                              <td>
+                                {row.avg_validation_score !== null
+                                  ? <ScoreBar value={row.avg_validation_score} />
+                                  : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
+                                }
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      {rows.length > 0 && (
+                        <tfoot>
+                          <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--panel2)' }}>
+                            <td style={{ fontWeight: 700, fontSize: 13 }}>Overall Average</td>
+                            <td />
+                            <td><ScoreBar value={totalComp} /></td>
+                            <td>
+                              {totalVal !== null
+                                ? <ScoreBar value={totalVal} />
+                                : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>Pending</span>
+                              }
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
               </div>
             );
           })()}
@@ -836,7 +946,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 }}>
                   <span style={{ fontSize: 15 }}>📊</span>
                   <strong style={{ fontSize: 13 }}>Avg Score by BCBS 239 Principle</strong>
-                  <span className="small" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>Scale 1–4</span>
+                  <span className="small" style={{ color: 'var(--muted)' }}>Scale 1–4</span>
+                  {thematicBuFilter !== 'all' && (
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
+                      {buName(thematicBuFilter)}
+                    </span>
+                  )}
                 </div>
                 <div style={{ padding: '16px 16px 8px' }}>
                   <ResponsiveContainer width="100%" height={Math.max(260, barChartData.length * 46)}>
@@ -892,6 +1007,11 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 }}>
                   <span style={{ fontSize: 15 }}>🕸️</span>
                   <strong style={{ fontSize: 13 }}>Avg Validation Score by Thematic Area</strong>
+                  {thematicBuFilter !== 'all' && (
+                    <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
+                      {buName(thematicBuFilter)}
+                    </span>
+                  )}
                 </div>
                 <div style={{ padding: '16px 8px 0' }}>
                   <ResponsiveContainer width="100%" height={280}>

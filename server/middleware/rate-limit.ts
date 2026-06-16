@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Request } from 'express';
 
 const skipLocalhost = (req: { ip?: string }) =>
@@ -9,7 +9,7 @@ const skipLocalhost = (req: { ip?: string }) =>
 // may egress through one NAT IP, so an IP-only key would put everyone in one
 // bucket and trip 429 for all (Known Issue #10). Fall back to IP when no user.
 const keyByUser = (req: Request) =>
-  (req.headers['x-user-id'] as string | undefined) || req.ip || 'anon';
+  (req.headers['x-user-id'] as string | undefined) || ipKeyGenerator(req.ip ?? '') || 'anon';
 
 const MAX = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 3000;
 

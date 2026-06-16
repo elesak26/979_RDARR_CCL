@@ -308,19 +308,29 @@ export default function ResponseForm({ currentUser }: Props) {
                 {comments || 'No comments provided.'}
               </div>
             ) : (
-              <textarea
-                value={comments}
-                onChange={e => setComments(e.target.value)}
-                placeholder="Describe your compliance level, evidence, and any relevant notes…"
-                rows={5}
-                style={{
-                  width: '100%', padding: '10px 12px',
-                  border: '1px solid var(--line)', borderRadius: 6,
-                  background: 'var(--input-bg)', color: 'var(--text)',
-                  fontSize: 13, lineHeight: 1.6, resize: 'vertical',
-                  fontFamily: 'inherit',
-                }}
-              />
+              <>
+                <textarea
+                  value={comments}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if ((val.match(/\n/g) ?? []).length < 20) setComments(val);
+                  }}
+                  placeholder="Describe your compliance level, evidence, and any relevant notes…"
+                  rows={5}
+                  style={{
+                    width: '100%', padding: '10px 12px',
+                    border: '1px solid ' + ((comments.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                    background: 'var(--input-bg)', color: 'var(--text)',
+                    fontSize: 13, lineHeight: 1.6, resize: 'vertical',
+                    fontFamily: 'inherit',
+                  }}
+                />
+                {(comments.match(/\n/g) ?? []).length >= 20 && (
+                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
+                    You have reached the maximum allowed rows.
+                  </div>
+                )}
+              </>
             )}
           </div>
 

@@ -591,19 +591,29 @@ export default function ValidationDetail() {
               {justification || 'No justification provided.'}
             </div>
           ) : (
-            <textarea
-              value={justification}
-              onChange={e => setJustification(e.target.value)}
-              placeholder="Explain the rationale for your validation score…"
-              rows={4}
-              style={{
-                width: '100%', padding: '10px 12px',
-                border: '1px solid var(--line)', borderRadius: 6,
-                background: 'var(--input-bg)', color: 'var(--text)',
-                fontSize: 13, lineHeight: 1.6, resize: 'vertical',
-                fontFamily: 'inherit',
-              }}
-            />
+            <>
+              <textarea
+                value={justification}
+                onChange={e => {
+                  const val = e.target.value;
+                  if ((val.match(/\n/g) ?? []).length < 20) setJustification(val);
+                }}
+                placeholder="Explain the rationale for your validation score…"
+                rows={4}
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  border: '1px solid ' + ((justification.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                  background: 'var(--input-bg)', color: 'var(--text)',
+                  fontSize: 13, lineHeight: 1.6, resize: 'vertical',
+                  fontFamily: 'inherit',
+                }}
+              />
+              {(justification.match(/\n/g) ?? []).length >= 20 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
+                  You have reached the maximum allowed rows.
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -620,19 +630,29 @@ export default function ValidationDetail() {
               {additionalControls || 'None specified.'}
             </div>
           ) : (
-            <textarea
-              value={additionalControls}
-              onChange={e => setAdditionalControls(e.target.value)}
-              placeholder="Note any additional controls or action items required…"
-              rows={3}
-              style={{
-                width: '100%', padding: '10px 12px',
-                border: '1px solid var(--line)', borderRadius: 6,
-                background: 'var(--input-bg)', color: 'var(--text)',
-                fontSize: 13, lineHeight: 1.6, resize: 'vertical',
-                fontFamily: 'inherit',
-              }}
-            />
+            <>
+              <textarea
+                value={additionalControls}
+                onChange={e => {
+                  const val = e.target.value;
+                  if ((val.match(/\n/g) ?? []).length < 20) setAdditionalControls(val);
+                }}
+                placeholder="Note any additional controls or action items required…"
+                rows={3}
+                style={{
+                  width: '100%', padding: '10px 12px',
+                  border: '1px solid ' + ((additionalControls.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                  background: 'var(--input-bg)', color: 'var(--text)',
+                  fontSize: 13, lineHeight: 1.6, resize: 'vertical',
+                  fontFamily: 'inherit',
+                }}
+              />
+              {(additionalControls.match(/\n/g) ?? []).length >= 20 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
+                  You have reached the maximum allowed rows.
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -723,18 +743,26 @@ export default function ValidationDetail() {
             <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Rejection Comment</div>
             <textarea
               value={rejectionComment}
-              onChange={e => setRejectionComment(e.target.value)}
+              onChange={e => {
+                const val = e.target.value;
+                if ((val.match(/\n/g) ?? []).length < 20) setRejectionComment(val);
+              }}
               placeholder="Provide a reason for rejection (required when rejecting)…"
               rows={3}
               style={{
                 width: '100%', padding: '10px 12px',
-                border: '1px solid var(--line)', borderRadius: 6,
+                border: '1px solid ' + ((rejectionComment.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
                 background: 'var(--input-bg)', color: 'var(--text)',
                 fontSize: 13, lineHeight: 1.6, resize: 'vertical',
                 fontFamily: 'inherit',
-                marginBottom: 12,
+                marginBottom: (rejectionComment.match(/\n/g) ?? []).length >= 20 ? 4 : 12,
               }}
             />
+            {(rejectionComment.match(/\n/g) ?? []).length >= 20 && (
+              <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 12 }}>
+                You have reached the maximum allowed rows.
+              </div>
+            )}
           </div>
         )}
 
@@ -799,12 +827,23 @@ export default function ValidationDetail() {
               <label>Comment (optional)</label>
               <textarea
                 value={returnComment}
-                onChange={e => setReturnComment(e.target.value)}
+                onChange={e => {
+                  const val = e.target.value;
+                  if ((val.match(/\n/g) ?? []).length < 20) setReturnComment(val);
+                }}
                 rows={3}
-                style={{ width: '100%', resize: 'vertical' }}
+                style={{
+                  width: '100%', resize: 'vertical',
+                  border: '1px solid ' + ((returnComment.match(/\n/g) ?? []).length >= 20 ? 'var(--danger)' : 'var(--line)'),
+                }}
                 placeholder="Explain what needs to be revised…"
                 autoFocus
               />
+              {(returnComment.match(/\n/g) ?? []).length >= 20 && (
+                <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
+                  You have reached the maximum allowed rows.
+                </div>
+              )}
             </div>
             {saveError && (
               <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>{saveError}</div>
