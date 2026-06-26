@@ -15,11 +15,12 @@ export default function ValidationQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [cycleFilter, setCycleFilter] = useState<number | 'all'>('all');
-  const [buFilter, setBuFilter] = useState<string | 'all'>('all');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const statusFilter = searchParams.get('status');
+  const urlCycleId = searchParams.get('cycle_id') ? Number(searchParams.get('cycle_id')) : 'all';
+  const [cycleFilter, setCycleFilter] = useState<number | 'all'>(urlCycleId);
+  const [buFilter, setBuFilter] = useState<string | 'all'>('all');
   const buName = useBuNames();
 
   const load = useCallback(async () => {
@@ -31,7 +32,7 @@ export default function ValidationQueue() {
         api.get<Cycle[]>('/cycles'),
       ]);
       setCurrentUser(me);
-      const activeCycles = allCycles.filter(c => c.status === 'distributed' || c.status === 'closed');
+      const activeCycles = allCycles.filter(c => c.status === 'distributed');
       setCycles(activeCycles);
 
       const enriched: EnrichedValidation[] = [];

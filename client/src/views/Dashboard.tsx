@@ -72,16 +72,19 @@ export default function Dashboard({ currentUser }: Props) {
       const distributedCycles = allCycles.filter(c => c.status === 'distributed');
 
       if (distributedCycles.length > 0) {
+        const unitCodes = currentUser?.unit_codes?.length ? currentUser.unit_codes : currentUser?.primary_unit_code ? [currentUser.primary_unit_code] : [];
         const [valArrays, respArrays] = await Promise.all([
           Promise.all(
             distributedCycles.map(c =>
               api.get<Validation[]>(`/cycles/${c.id}/validations`).catch((): Validation[] => [])
             )
           ),
-          currentUser?.primary_unit_code
+          unitCodes.length > 0
             ? Promise.all(
-                distributedCycles.map(c =>
-                  api.get<Response[]>(`/cycles/${c.id}/responses?bu_code=${encodeURIComponent(currentUser.primary_unit_code!)}`).catch((): Response[] => [])
+                distributedCycles.flatMap(c =>
+                  unitCodes.map(buCode =>
+                    api.get<Response[]>(`/cycles/${c.id}/responses?bu_code=${encodeURIComponent(buCode)}`).catch((): Response[] => [])
+                  )
                 )
               )
             : Promise.resolve<Response[][]>([]),
@@ -97,7 +100,7 @@ export default function Dashboard({ currentUser }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.primary_unit_code]);
+  }, [currentUser?.primary_unit_code, currentUser?.unit_codes]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -118,6 +121,7 @@ export default function Dashboard({ currentUser }: Props) {
 
   const pendingCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'pending').length : 0;
   const inReviewCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'in_review').length : 0;
+  const rejectedCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'rejected').length : 0;
   const pendingApprovalCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'pending_approval').length : 0;
   const closedValCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'closed').length : 0;
 
@@ -365,7 +369,6 @@ export default function Dashboard({ currentUser }: Props) {
       <div className="topbar" style={{ marginBottom: 16 }}>
         <div className="left">
           <strong style={{ fontSize: 18 }}>Dashboard</strong>
-          {activeCycles.length === 1 && <WorkflowBadge status={activeCycles[0].status} />}
           {activeCycles.length > 1 && <span className="chip">{activeCycles.length} active cycles</span>}
         </div>
         {activeCycles.length === 1 && (
@@ -503,6 +506,12 @@ export default function Dashboard({ currentUser }: Props) {
               style={{ borderTop: '3px solid var(--warn)', background: 'rgba(255,193,7,.06)' }}
             />
             <KpiCard
+              label={<span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>Rejected by SV {rejectedCount > 0 && <ActionBadge />}</span>}
+              value={<span style={{ color: rejectedCount > 0 ? 'var(--danger)' : 'var(--muted)' }}>{rejectedCount}</span>}
+              onClick={rejectedCount > 0 ? () => navigate(`/validation?status=rejected${cycleQS}`) : undefined}
+              style={rejectedCount > 0 ? { borderTop: '3px solid var(--danger)', background: 'rgba(220,53,69,.06)' } : undefined}
+            />
+            <KpiCard
               label="Pending Approval"
               value={<span style={{ color: '#7c3aed' }}>{pendingApprovalCount}</span>}
               onClick={pendingApprovalCount > 0 ? () => navigate(`/validation?status=pending_approval${cycleQS}`) : undefined}
@@ -529,23 +538,26 @@ export default function Dashboard({ currentUser }: Props) {
             <KpiCard
               label="In Review"
               value={<span style={{ color: 'var(--warn)' }}>{inReviewCount}</span>}
-              onClick={inReviewCount > 0 ? () => navigate(`/validation?status=in_review${cycleQS}`) : undefined}
             />
             <KpiCard
               label={<span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>Pending Approval <ActionBadge /></span>}
               value={<span style={{ color: '#7c3aed' }}>{pendingApprovalCount}</span>}
-              onClick={pendingApprovalCount > 0 ? () => navigate(`/validation?status=pending_approval${cycleQS}`) : undefined}
+              onClick={pendingApprovalCount > 0
+                ? () => navigate(`/validation-overview${selectedCycleId !== null ? `?cycle=${selectedCycleId}` : ''}`)
+                : undefined}
               style={{ borderTop: '3px solid #7c3aed', background: 'rgba(124,58,237,.06)' }}
             />
             <KpiCard
               label="Closed"
               value={<span style={{ color: 'var(--ok)' }}>{closedValCount}</span>}
-              onClick={closedValCount > 0 ? () => navigate(`/validation?status=closed${cycleQS}`) : undefined}
+              onClick={closedValCount > 0
+                ? () => navigate(`/validation-overview${selectedCycleId !== null ? `?cycle=${selectedCycleId}` : ''}`)
+                : undefined}
             />
           </div>
           <div style={{ marginTop: 16 }}>
-            <Link to={`/validation${selectedCycleId !== null ? `?cycle_id=${selectedCycleId}` : ''}`}>
-              <button className="btn primary">Validation Actions →</button>
+            <Link to={`/validation-overview${selectedCycleId !== null ? `?cycle=${selectedCycleId}` : ''}`}>
+              <button className="btn primary">Validation Overview →</button>
             </Link>
           </div>
         </>
@@ -560,7 +572,7 @@ export default function Dashboard({ currentUser }: Props) {
             const respResponses = respCycleId !== null
               ? responses.filter(r => r.cycle_id === respCycleId)
               : responses;
-            const inProgressCount = hasActiveCycles ? respResponses.filter(r => r.status === 'draft' || r.status === 'in_progress').length : 0;
+            const inProgressCount = hasActiveCycles ? respResponses.filter(r => r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned').length : 0;
             const submittedCount = hasActiveCycles ? respResponses.filter(r => r.status === 'submitted').length : 0;
             const assignedCount = hasActiveCycles ? respResponses.length : 0;
             const assignmentsLink = `/assignments${respCycleId ? `?cycle_id=${respCycleId}` : ''}`;

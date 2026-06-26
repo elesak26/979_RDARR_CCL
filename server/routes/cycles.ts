@@ -7,10 +7,45 @@ import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
 
+interface ChecklistEntry {
+  buCode: string;
+  materialRisk: string | null;
+  weight: number | null; // 0–1 decimal, e.g. 0.40 for "40%"
+}
+
 interface ChecklistRow {
   itemNumber: number;
-  buCodes: string[];
-  materialRisk: string | null;
+  entries: ChecklistEntry[];
+}
+
+/**
+ * Parse column K entries of the form:
+ *   "966: Operational Risk: 40% | 007: Operational Risk: 60%"
+ * Each pipe-separated token is "BU_CODE: Material Risk Label: Weight%"
+ * Returns one ChecklistEntry per token.
+ */
+function parseColumnK(raw: string): ChecklistEntry[] {
+  return raw
+    .split('|')
+    .map(token => token.replace(/[\r\n]/g, ' ').trim())
+    .filter(Boolean)
+    .map(token => {
+      // Split on ':' — first segment is BU code, last is weight%, middle is risk label
+      const parts = token.split(':').map(p => p.trim());
+      if (parts.length < 2) return { buCode: token, materialRisk: null, weight: null };
+
+      const buCode = parts[0];
+      const weightStr = parts[parts.length - 1]; // e.g. "40%"
+      const weightMatch = weightStr.match(/([\d.]+)\s*%/);
+      const weight = weightMatch ? parseFloat(weightMatch[1]) / 100 : null;
+
+      // Middle parts (between BU code and weight) form the material risk label
+      const riskParts = parts.slice(1, parts.length - 1);
+      const materialRisk = riskParts.length > 0 ? riskParts.join(':').trim() || null : null;
+
+      return { buCode, materialRisk, weight };
+    })
+    .filter(e => e.buCode.length > 0);
 }
 
 function parseChecklistXlsx(filePath: string): ChecklistRow[] {
@@ -18,40 +53,46 @@ function parseChecklistXlsx(filePath: string): ChecklistRow[] {
   const ws = wb.Sheets['Compliance Checklist'];
   if (!ws) throw new Error('XLSX is missing the "Compliance Checklist" sheet');
 
-  const raw = XLSX.utils.sheet_to_json<(string | number | null)[]>(ws, { header: 1, defval: null });
+  // Build a row→col→value map by iterating actual cell keys only.
+  // This avoids sheet_to_json which allocates a full array up to !ref's last row —
+  // some files have a stray cell at row 1M that extends !ref to the sheet limit.
+  const COL_ITEM = 0;   // A
+  const COL_UNITS = 10; // K
 
-  // Find header row (contains "Item #")
-  let hdrIdx = -1;
-  for (let i = 0; i < Math.min(20, raw.length); i++) {
-    if (raw[i] && raw[i][0] === 'Item #') { hdrIdx = i; break; }
+  const cellMap = new Map<number, Map<number, string | number>>();
+  for (const key of Object.keys(ws)) {
+    if (key.startsWith('!')) continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    if (c !== COL_ITEM && c !== COL_UNITS) continue;
+    const v = ws[key]?.v;
+    if (v === null || v === undefined || v === '') continue;
+    if (!cellMap.has(r)) cellMap.set(r, new Map());
+    cellMap.get(r)!.set(c, v as string | number);
   }
-  if (hdrIdx === -1) throw new Error('Cannot find header row ("Item #") in Compliance Checklist sheet');
 
-  const COL_ITEM = 0;
-  const COL_UNITS = 10;
-  const COL_RISK = 12;
+  // Find header row (row where col A === 'Item #'), search first 20 rows
+  const sortedRows = [...cellMap.keys()].sort((a, b) => a - b);
+  let hdrRow = -1;
+  for (const r of sortedRows.slice(0, 20)) {
+    if (cellMap.get(r)?.get(COL_ITEM) === 'Item #') { hdrRow = r; break; }
+  }
+  if (hdrRow === -1) throw new Error('Cannot find header row ("Item #") in Compliance Checklist sheet');
 
   const results: ChecklistRow[] = [];
-  for (let i = hdrIdx + 1; i < raw.length; i++) {
-    const row = raw[i];
-    if (!row || row.every(c => c === null)) continue;
-    const itemRaw = row[COL_ITEM];
-    if (itemRaw === null || itemRaw === undefined) continue;
+  for (const r of sortedRows) {
+    if (r <= hdrRow) continue;
+    const row = cellMap.get(r)!;
+    const itemRaw = row.get(COL_ITEM);
+    if (itemRaw === undefined) continue;
     const itemNumber = typeof itemRaw === 'number' ? itemRaw : parseInt(String(itemRaw), 10);
     if (!Number.isFinite(itemNumber)) continue;
 
-    const unitsRaw = row[COL_UNITS] as string | null;
+    const unitsRaw = row.get(COL_UNITS);
     if (!unitsRaw) continue;
-    const buCodes = String(unitsRaw)
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    if (buCodes.length === 0) continue;
+    const entries = parseColumnK(String(unitsRaw));
+    if (entries.length === 0) continue;
 
-    const riskRaw = row[COL_RISK] as string | null;
-    const materialRisk = riskRaw ? String(riskRaw).trim() || null : null;
-
-    results.push({ itemNumber, buCodes, materialRisk });
+    results.push({ itemNumber, entries });
   }
   return results;
 }
@@ -70,49 +111,61 @@ const checklistUpload = multer({ storage: checklistStorage, limits: { fileSize: 
 
 const router = Router();
 
+// BU 961 is split into three material-risk sub-entities for validation purposes.
+// These codes are the canonical keys used in ccl_item_weights and respondent_units.
+const BU_961_SPLIT = ['961-IRRBB', '961-Liquidity', '961-Market'];
+
+// Maps a material_risk label (from XLSX column K) to its 961 sub-entity bu_code.
+const MATERIAL_RISK_TO_961_BU: Record<string, string> = {
+  'IRRBB': '961-IRRBB',
+  'Liquidity Risk': '961-Liquidity',
+  'Market Risk': '961-Market',
+};
+
 // Question-to-BU mapping derived from 0NBG_RDARR Compliance Checklist_addons_v3.xlsx
-// Key = item_number, value = list of BU codes assigned to that question
+// Key = item_number, value = list of BU codes assigned to that question.
+// BU 961 is listed as three separate entries (one per material risk) rather than bare '961'.
 const QUESTION_BU_MAP: Record<number, string[]> = {
    1: ['966', '007-52'],
-   2: ['966', '030', '961', '023', '908', '006', '956', '974'],
+   2: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956', '974'],
    3: ['966'],
    4: ['966'],
    5: ['966'],
    6: ['966'],
    7: ['966', 'DG MLE'],
-   8: ['030', '961', '023', '908', '006', '956'],
+   8: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
    9: ['966'],
   10: ['966'],
   11: ['966'],
-  12: ['966', '030', '961', '023', '908', '006', '956'],
-  13: ['966', '030', '961', '023', '908'],
-  14: ['966', '030', '961', '023', '908', '006', '956'],
+  12: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  13: ['966', '030', ...BU_961_SPLIT, '023', '908'],
+  14: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956'],
   15: ['966'],
   16: ['966'],
   17: ['979'],
   18: ['966'],
-  19: ['030', '961', '023', '908', '006', '956', '966', '905'],
+  19: ['030', ...BU_961_SPLIT, '023', '908', '006', '956', '966', '905'],
   20: ['DG MLE'],
-  21: ['030', '961', '023', '908', '006', '956', '905'],
+  21: ['030', ...BU_961_SPLIT, '023', '908', '006', '956', '905'],
   22: ['966'],
-  23: ['966', '030', '961', '023', '908', '006', '956'],
+  23: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956'],
   24: ['966'],
-  25: ['030', '961', '023', '908', '006', '956'],
+  25: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
   26: ['966'],
-  27: ['030', '961', '023', '908', '006', '956'],
-  28: ['030', '961', '023', '902'],
-  29: ['030', '961', '023', '908', '006', '956'],
-  30: ['030', '961', '023', '908', '006', '956'],
-  31: ['030', '961', '023', '908', '006', '956'],
+  27: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  28: ['030', ...BU_961_SPLIT, '023', '902'],
+  29: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  30: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  31: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
   32: ['966'],
-  33: ['030', '961', '023', '908', '006', '956'],
-  34: ['030', '961', '023', '908', '006', '956'],
-  35: ['030', '961', '023', '908', '006', '956'],
-  36: ['030', '961', '023', '908', '006', '956'],
-  37: ['030', '961', '023', '908', '006', '956'],
-  38: ['030', '961', '023', '908', '006', '956'],
-  39: ['030', '961', '023', '908', '006', '956'],
-  40: ['030', '961', '023', '908', '006', '956', 'Committee Secretaries'],
+  33: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  34: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  35: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  36: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  37: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  38: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  39: ['030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+  40: ['030', ...BU_961_SPLIT, '023', '908', '006', '956', 'Committee Secretaries'],
 };
 
 // GET /api/cycles — list all cycles
@@ -229,7 +282,8 @@ router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: N
     notifyRole('Senior Validator',
       `Cycle "${cycle0.name}" pending your approval`,
       `The Validator has submitted cycle "${cycle0.name}" for approval. Please review and approve or reject it.`,
-      parseInt(String(id), 10)
+      parseInt(String(id), 10),
+      `/cycles`
     ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
@@ -261,7 +315,8 @@ router.put('/api/cycles/:id/approve', async (req: Request, res: Response, next: 
     notifyRole('Validator',
       `Cycle "${cycle1.name}" approved — ready to distribute`,
       `The Senior Validator has approved cycle "${cycle1.name}". You can now distribute the checklist to respondents.`,
-      parseInt(String(id), 10)
+      parseInt(String(id), 10),
+      `/cycles`
     ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
@@ -277,12 +332,13 @@ router.put('/api/cycles/:id/reject', async (req: Request, res: Response, next: N
   }
   try {
     const { id } = req.params;
+    const { rejection_comment } = req.body as { rejection_comment?: string };
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'draft', rejection_comment = NULL, published_at = NULL, updated_at = now()
+       SET status = 'draft', rejection_comment = $2, published_at = NULL, updated_at = now()
        WHERE id = $1 AND status = 'pending_approval'
        RETURNING *`,
-      [id]
+      [id, rejection_comment?.trim() || null]
     );
     if (result.rows.length === 0) {
       res.status(400).json({ error: 'Cycle not found or not pending approval' });
@@ -326,7 +382,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       const questionMap = new Map<number, { id: number; material_risk: string | null }>();
       for (const q of questionsResult.rows) questionMap.set(q.item_number, { id: q.id, material_risk: q.material_risk });
 
-      const rows: { question_id: number; bu_code: string; material_risk: string | null }[] = [];
+      const rows: { question_id: number; bu_code: string; material_risk: string | null; weight: number | null }[] = [];
 
       // Try to parse the uploaded checklist XLSX for this cycle
       const cycleFileResult = await query<{ checklist_file: string | null }>(
@@ -340,21 +396,16 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
         try {
           const filePath = path.join(UPLOAD_DIR, checklistFile);
           const xlsxRows = parseChecklistXlsx(filePath);
-          for (const { itemNumber, buCodes, materialRisk } of xlsxRows) {
+          for (const { itemNumber, entries } of xlsxRows) {
             const qInfo = questionMap.get(itemNumber);
             if (!qInfo) continue;
-            // If the XLSX specifies a material risk, create one row per risk token
-            const risks = materialRisk
-              ? materialRisk.split('|').map(r => r.trim()).filter(Boolean)
-              : [];
-            for (const buCode of buCodes) {
-              if (buCode === '961' && risks.length > 0) {
-                for (const risk of risks) {
-                  rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
-                }
-              } else {
-                rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
-              }
+            for (const { buCode, materialRisk, weight } of entries) {
+              // BU 961 entries are emitted as split sub-entity codes based on their material risk label
+              const resolvedBuCode =
+                buCode === '961' && materialRisk && MATERIAL_RISK_TO_961_BU[materialRisk]
+                  ? MATERIAL_RISK_TO_961_BU[materialRisk]
+                  : buCode;
+              rows.push({ question_id: qInfo.id, bu_code: resolvedBuCode, material_risk: materialRisk, weight });
             }
           }
           usedXlsx = rows.length > 0;
@@ -364,21 +415,13 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       }
 
       if (!usedXlsx) {
-        // Fallback: hardcoded QUESTION_BU_MAP
+        // Fallback: hardcoded QUESTION_BU_MAP (equal weights per BU)
         for (const [itemNumber, buCodes] of Object.entries(QUESTION_BU_MAP)) {
           const qInfo = questionMap.get(Number(itemNumber));
           if (!qInfo) continue;
-          const risks = qInfo.material_risk
-            ? qInfo.material_risk.split(',').map(r => r.trim()).filter(Boolean)
-            : [];
+          const equalWeight = buCodes.length > 0 ? 1 / buCodes.length : null;
           for (const buCode of buCodes) {
-            if (buCode === '961' && risks.length > 0) {
-              for (const risk of risks) {
-                rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: risk });
-              }
-            } else {
-              rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null });
-            }
+            rows.push({ question_id: qInfo.id, bu_code: buCode, material_risk: null, weight: equalWeight });
           }
         }
       }
@@ -388,14 +431,20 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
         return;
       }
 
-      for (const row of rows) {
-        await query(
-          `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by, material_risk)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING`,
-          [id, row.question_id, row.bu_code, row.bu_code, req.user?.id ?? null, row.material_risk ?? null]
-        );
-      }
+      await query(
+        `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by, material_risk, weight)
+         SELECT $1::int, unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), $5, unnest($6::text[]), unnest($7::numeric[])
+         ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING`,
+        [
+          id,
+          rows.map(r => r.question_id),
+          rows.map(r => r.bu_code),
+          rows.map(r => r.bu_code),
+          req.user?.id ?? null,
+          rows.map(r => r.material_risk ?? null),
+          rows.map(r => r.weight ?? null),
+        ]
+      );
     }
 
     // Transition cycle status
@@ -407,10 +456,10 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       [id]
     );
 
-    // Create draft response rows for every (question, BU, material_risk) applicability entry
+    // Create draft response rows for every (question, BU, material_risk) applicability entry, carrying weight
     const insertResult = await query<{ cnt: string }>(
-      `INSERT INTO responses (cycle_id, question_id, bu_code, material_risk)
-       SELECT qa.cycle_id, qa.question_id, qa.bu_code, qa.material_risk
+      `INSERT INTO responses (cycle_id, question_id, bu_code, material_risk, weight)
+       SELECT qa.cycle_id, qa.question_id, qa.bu_code, qa.material_risk, qa.weight
        FROM question_applicability qa
        WHERE qa.cycle_id = $1
        ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING
@@ -423,7 +472,8 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
     notifyRole('Validator',
       `Cycle "${cycle2.name}" has been distributed`,
       `Cycle "${cycle2.name}" is now in validation. Items are ready to be assessed by respondents.`,
-      parseInt(String(id), 10)
+      parseInt(String(id), 10),
+      `/validation`
     ).catch(() => {});
     res.json(result.rows[0]);
   } catch (err) {
@@ -431,7 +481,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
   }
 });
 
-// PUT /api/cycles/:id/close — distributed → closed (Admin)
+// PUT /api/cycles/:id/close — distributed → closed (Validator)
 router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: NextFunction) => {
   if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
@@ -439,17 +489,50 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
   }
   try {
     const { id } = req.params;
-    const result = await query(
-      `UPDATE questionnaire_cycles
-       SET status = 'closed', closed_at = now(), updated_at = now()
-       WHERE id = $1 AND status = 'distributed'
-       RETURNING *`,
+
+    // Verify cycle exists and is distributed
+    const cycleCheck = await query(
+      `SELECT id FROM questionnaire_cycles WHERE id = $1 AND status = 'distributed'`,
       [id]
     );
-    if (result.rows.length === 0) {
+    if (cycleCheck.rows.length === 0) {
       res.status(400).json({ error: 'Cycle not found or not in distributed status' });
       return;
     }
+
+    // Block if any response is not yet submitted
+    const pendingResponses = await query<{ cnt: string }>(
+      `SELECT COUNT(*) AS cnt FROM responses
+       WHERE cycle_id = $1 AND status NOT IN ('submitted')`,
+      [id]
+    );
+    if (parseInt(pendingResponses.rows[0].cnt, 10) > 0) {
+      res.status(400).json({
+        error: `Cannot close: ${pendingResponses.rows[0].cnt} response(s) have not been submitted by respondents yet.`,
+      });
+      return;
+    }
+
+    // Block if any validation is not yet closed
+    const pendingValidations = await query<{ cnt: string }>(
+      `SELECT COUNT(*) AS cnt FROM validations
+       WHERE cycle_id = $1 AND status <> 'closed'`,
+      [id]
+    );
+    if (parseInt(pendingValidations.rows[0].cnt, 10) > 0) {
+      res.status(400).json({
+        error: `Cannot close: ${pendingValidations.rows[0].cnt} validation item(s) have not been fully reviewed and approved by the Senior Validator yet.`,
+      });
+      return;
+    }
+
+    const result = await query(
+      `UPDATE questionnaire_cycles
+       SET status = 'closed', closed_at = now(), updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
     logAudit({ action: 'cycle_closed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
     res.json(result.rows[0]);
   } catch (err) {

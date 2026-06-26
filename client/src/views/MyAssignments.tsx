@@ -48,6 +48,17 @@ export default function MyAssignments({ currentUser }: Props) {
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const fileRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
+  // Only show the sub-unit picker when the user has genuinely distinct codes (not just split material-risk
+  // sub-entities that all belong to the same organisational unit, e.g. 961-IRRBB / 961-Market / 961-Liquidity).
+  // We detect this by checking whether every extra code is a prefix-variant of the primary code.
+  const primaryCode = currentUser.primary_unit_code ?? '';
+  const hasDistinctSubUnits = currentUser.unit_codes.length > 1 &&
+    currentUser.unit_codes.some(c => c !== primaryCode && !c.startsWith(primaryCode + '-'));
+  const subUnitCodes = hasDistinctSubUnits ? currentUser.unit_codes : null;
+  const [selectedSubUnit, setSelectedSubUnit] = useState<string>(
+    currentUser.primary_unit_code ?? currentUser.unit_codes[0] ?? ''
+  );
+
   const [savingId, setSavingId] = useState<number | null>(null);
   const [resubmittingId, setResubmittingId] = useState<number | null>(null);
   const [submitAllBusy, setSubmitAllBusy] = useState(false);
@@ -58,6 +69,8 @@ export default function MyAssignments({ currentUser }: Props) {
   // Which cycle the user is currently working on (URL param takes priority on first load)
   const [selectedCycleId, setSelectedCycleId] = useState<number | null>(urlCycleId);
 
+  const activeBuCode = selectedSubUnit || currentUser.primary_unit_code || '';
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -66,7 +79,7 @@ export default function MyAssignments({ currentUser }: Props) {
       const distributed = cycles.filter(c => c.status === 'distributed');
       setActiveCycles(distributed);
 
-      if (distributed.length === 0 || !currentUser.primary_unit_code) {
+      if (distributed.length === 0 || !activeBuCode) {
         setResponses([]);
         setLoading(false);
         return;
@@ -75,10 +88,9 @@ export default function MyAssignments({ currentUser }: Props) {
       // Default to URL-specified cycle, then first available
       setSelectedCycleId(prev => prev ?? urlCycleId ?? distributed[0].id);
 
-      const buCode = currentUser.primary_unit_code;
       const perCycle = await Promise.all(
         distributed.map(c =>
-          api.get<Response[]>(`/cycles/${c.id}/responses?bu_code=${encodeURIComponent(buCode)}`).catch((): Response[] => [])
+          api.get<Response[]>(`/cycles/${c.id}/responses?bu_code=${encodeURIComponent(activeBuCode)}`).catch((): Response[] => [])
         )
       );
       const allResponses = perCycle.flat();
@@ -96,7 +108,7 @@ export default function MyAssignments({ currentUser }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [currentUser.primary_unit_code]);
+  }, [activeBuCode]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -113,7 +125,7 @@ export default function MyAssignments({ currentUser }: Props) {
         comments: d?.comments ?? null,
       });
       const updated = await api.get<Response[]>(
-        `/cycles/${r.cycle_id}/responses?bu_code=${encodeURIComponent(currentUser.primary_unit_code!)}`
+        `/cycles/${r.cycle_id}/responses?bu_code=${encodeURIComponent(activeBuCode)}`
       );
       setResponses(prev => {
         const others = prev.filter(x => x.cycle_id !== r.cycle_id);
@@ -215,7 +227,7 @@ export default function MyAssignments({ currentUser }: Props) {
     );
   }
 
-  if (!currentUser.primary_unit_code) {
+  if (!activeBuCode) {
     return (
       <div style={{ padding: 32, textAlign: 'center' }}>
         <strong>No unit assigned</strong>
@@ -466,19 +478,24 @@ export default function MyAssignments({ currentUser }: Props) {
                                 {d.comments || 'No comment.'}
                               </div>
                             ) : (
-                              <textarea
-                                value={d.comments}
-                                onChange={e => setDraft(r.id, { comments: e.target.value })}
-                                placeholder="Add a comment, describe your evidence or rationale…"
-                                rows={4}
-                                style={{
-                                  width: '100%', padding: '8px 12px',
-                                  border: '1px solid var(--line)', borderRadius: 6,
-                                  background: 'var(--input-bg)', color: 'var(--text)',
-                                  fontSize: 13, lineHeight: 1.5, resize: 'vertical',
-                                  fontFamily: 'inherit', marginBottom: 14,
-                                }}
-                              />
+                              <div style={{ marginBottom: 14 }}>
+                                <textarea
+                                  value={d.comments}
+                                  onChange={e => { if (e.target.value.length <= 1500) setDraft(r.id, { comments: e.target.value }); }}
+                                  placeholder="Add a comment, describe your evidence or rationale…"
+                                  rows={4}
+                                  style={{
+                                    width: '100%', padding: '8px 12px',
+                                    border: '1px solid ' + (d.comments.length >= 1500 ? 'var(--danger)' : 'var(--line)'), borderRadius: 6,
+                                    background: 'var(--input-bg)', color: 'var(--text)',
+                                    fontSize: 13, lineHeight: 1.5, resize: 'vertical',
+                                    fontFamily: 'inherit',
+                                  }}
+                                />
+                                {d.comments.length >= 1500 && (
+                                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum character limit reached</div>
+                                )}
+                              </div>
                             )}
 
                             <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Evidence Files</div>
@@ -593,7 +610,23 @@ export default function MyAssignments({ currentUser }: Props) {
       <div className="topbar" style={{ marginBottom: 16 }}>
         <div className="left">
           <strong style={{ fontSize: 18 }}>Self-Assessment</strong>
-          <span className="chip">{currentUser.display_name || currentUser.primary_unit_code}</span>
+          <span className="chip">{currentUser.display_name || activeBuCode}</span>
+          {subUnitCodes && (
+            <select
+              value={selectedSubUnit}
+              onChange={e => {
+                setSelectedSubUnit(e.target.value);
+                setStatusFilter('all');
+                setExpanded(null);
+                setSubmitError(null);
+              }}
+              style={{ fontWeight: 600, fontSize: 13, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--accent)', color: 'var(--accent-dark)', background: 'var(--accent-light)' }}
+            >
+              {subUnitCodes.map(code => (
+                <option key={code} value={code}>{code}</option>
+              ))}
+            </select>
+          )}
           {!multiCycle && (
             <span className="chip">{selectedCycle.name} · {selectedCycle.year}</span>
           )}

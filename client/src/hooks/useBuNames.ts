@@ -17,5 +17,13 @@ export function useBuNames(): (buCode: string) => string {
     }).catch(() => {});
   }, []);
 
-  return (buCode: string) => nameMap[buCode] ?? buCode;
+  const ALIASES: Record<string, string> = {
+    '961':           'Grp. Financial & Liquidity Risk Mgmt.',
+    '961-IRRBB':     'Grp. Fin. & Liquidity Risk Mgmt. (IRRBB)',
+    '961-Liquidity': 'Grp. Fin. & Liquidity Risk Mgmt. (Liquidity)',
+    '961-Market':    'Grp. Fin. & Liquidity Risk Mgmt. (Market)',
+    '006': 'Finance Reporting (006-956)',
+    '956': 'Finance Reporting (006-956)',
+  };
+  return (buCode: string) => nameMap[buCode] ?? ALIASES[buCode] ?? buCode;
 }

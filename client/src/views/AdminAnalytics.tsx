@@ -1,10 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { api } from '../api/client';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart,
-  type PieLabelRenderProps,
 } from 'recharts';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -128,16 +127,17 @@ function KpiCard({ label, value, sub, color }: { label: string; value: React.Rea
 
 // ── Custom tooltip ────────────────────────────────────────────────────────────
 
-const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
+const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string; payload?: { fullName?: string } }[]; label?: string }) => {
   if (!active || !payload?.length) return null;
+  const displayLabel = payload[0]?.payload?.fullName ?? label;
   return (
     <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 14px', fontSize: 12, boxShadow: 'var(--shadow-md)' }}>
-      {label && <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>}
+      {displayLabel && <div style={{ fontWeight: 700, marginBottom: 6 }}>{displayLabel}</div>}
       {payload.map(p => (
         <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: 'inline-block', flexShrink: 0 }} />
           <span style={{ color: 'var(--muted)' }}>{p.name}:</span>
-          <span style={{ fontWeight: 700 }}>{typeof p.value === 'number' ? p.value.toFixed(2) : p.value}</span>
+          <span style={{ fontWeight: 700 }}>{typeof p.value === 'number' ? (Number.isInteger(p.value) ? p.value : p.value.toFixed(2)) : p.value}</span>
         </div>
       ))}
     </div>
@@ -161,9 +161,8 @@ function DrillDownTable({ trends }: { trends: PerformanceTrend[] }) {
       </thead>
       <tbody>
         {trends.map(t => (
-          <>
+          <Fragment key={t.id}>
             <tr
-              key={t.id}
               style={{ cursor: 'pointer', background: expanded === t.id ? 'var(--hover-bg)' : undefined }}
               onClick={() => setExpanded(expanded === t.id ? null : t.id)}
             >
@@ -195,7 +194,7 @@ function DrillDownTable({ trends }: { trends: PerformanceTrend[] }) {
               <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtDate(t.distributed_at)} → {fmtDate(t.closed_at)}</td>
             </tr>
             {expanded === t.id && (
-              <tr key={`${t.id}-exp`}>
+              <tr>
                 <td colSpan={9} style={{ background: 'var(--panel2)', padding: '12px 20px' }}>
                   <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                     <div>
@@ -226,7 +225,7 @@ function DrillDownTable({ trends }: { trends: PerformanceTrend[] }) {
                 </td>
               </tr>
             )}
-          </>
+          </Fragment>
         ))}
       </tbody>
     </table>
@@ -277,6 +276,7 @@ export default function AdminAnalytics({ year }: { year: number | null }) {
 
   interface TrendChartRow {
     name: string;
+    fullName: string;
     'BU Assessment': number | null;
     'Validation': number | null;
     'Duration (days)': number | null;
@@ -287,12 +287,14 @@ export default function AdminAnalytics({ year }: { year: number | null }) {
   const trendChartData: TrendChartRow[] = [
     ...performance_trends.map(t => ({
       name: shortName(t.name),
+      fullName: t.name,
       'BU Assessment': t.avg_comp_score,
       'Validation': t.avg_val_score,
       'Duration (days)': t.cycle_duration_days,
     })),
     ...(forecasting.data_points >= 2 ? [{
       name: 'Next (est.)',
+      fullName: 'Next cycle (estimated)',
       'BU Assessment': null as number | null,
       'Validation': null as number | null,
       'Duration (days)': null as number | null,
@@ -352,7 +354,7 @@ export default function AdminAnalytics({ year }: { year: number | null }) {
               <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>
                 Forecast based on linear trend of {forecasting.data_points} closed cycles.<br />
                 R² val={forecasting.r_squared_val} · R² comp={forecasting.r_squared_comp}<br />
-                <span style={{ fontStyle: 'italic' }}>{forecasting.r_squared_val > 0.7 ? 'High confidence' : forecasting.r_squared_val > 0.4 ? 'Moderate confidence' : 'Low confidence — more cycles needed'}</span>
+                <span style={{ fontStyle: 'italic' }}>{(() => { const r2 = Math.min(forecasting.r_squared_val, forecasting.r_squared_comp); return r2 > 0.7 ? 'High confidence' : r2 > 0.4 ? 'Moderate confidence' : 'Low confidence — more cycles needed'; })()}</span>
               </div>
             </div>
           </div>
@@ -384,8 +386,6 @@ export default function AdminAnalytics({ year }: { year: number | null }) {
                       nameKey="score"
                       cx="50%" cy="50%"
                       outerRadius={80}
-                      label={(props: PieLabelRenderProps) => `${(props.payload as ScoreDistribution)?.score} (${((props.percent ?? 0) * 100).toFixed(0)}%)`}
-                      labelLine={false}
                     >
                       {score_distribution.map(d => (
                         <Cell key={d.score} fill={SCORE_COLORS[d.score] ?? '#adb5bd'} />
@@ -426,8 +426,6 @@ export default function AdminAnalytics({ year }: { year: number | null }) {
                       nameKey="status"
                       cx="50%" cy="50%"
                       outerRadius={80}
-                      label={(props: PieLabelRenderProps) => `${(props.payload as CycleStatus)?.status} (${((props.percent ?? 0) * 100).toFixed(0)}%)`}
-                      labelLine={false}
                     >
                       {cycle_status.map(d => (
                         <Cell key={d.status} fill={STATUS_COLORS[d.status] ?? '#adb5bd'} />

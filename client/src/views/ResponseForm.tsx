@@ -58,21 +58,29 @@ export default function ResponseForm({ currentUser }: Props) {
       let foundResponse: Response | null = null;
       let foundCycle: Cycle | null = null;
 
-      for (const c of distributedCycles) {
-        try {
-          const buCode = currentUser.primary_unit_code;
-          const path = buCode
-            ? `/cycles/${c.id}/responses?bu_code=${encodeURIComponent(buCode)}`
-            : `/cycles/${c.id}/responses`;
-          const resps = await api.get<Response[]>(path);
-          const match = resps.find(r => String(r.id) === responseId);
-          if (match) {
-            foundResponse = match;
-            foundCycle = c;
-            break;
+      const unitCodes = currentUser.unit_codes?.length
+        ? currentUser.unit_codes
+        : currentUser.primary_unit_code
+        ? [currentUser.primary_unit_code]
+        : [];
+
+      outer: for (const c of distributedCycles) {
+        const codesToTry = unitCodes.length > 0 ? unitCodes : [null];
+        for (const buCode of codesToTry) {
+          try {
+            const path = buCode
+              ? `/cycles/${c.id}/responses?bu_code=${encodeURIComponent(buCode)}`
+              : `/cycles/${c.id}/responses`;
+            const resps = await api.get<Response[]>(path);
+            const match = resps.find(r => String(r.id) === responseId);
+            if (match) {
+              foundResponse = match;
+              foundCycle = c;
+              break outer;
+            }
+          } catch {
+            // skip
           }
-        } catch {
-          // skip cycle
         }
       }
 
@@ -94,7 +102,7 @@ export default function ResponseForm({ currentUser }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [responseId, currentUser.primary_unit_code]);
+  }, [responseId, currentUser.primary_unit_code, currentUser.unit_codes]);
 
   useEffect(() => { load(); }, [load]);
 

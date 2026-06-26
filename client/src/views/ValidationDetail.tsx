@@ -1,24 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { api, getCurrentUserId } from '../api/client';
+import { api } from '../api/client';
 import type { Validation, Response, Cycle, User, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import { displayFileName } from '../utils/displayFileName';
 import { useBuNames } from '../hooks/useBuNames';
-
-const SCORE_LABELS: Record<number, string> = {
-  1: 'Non-compliant',
-  2: 'Partially compliant',
-  3: 'Largely compliant',
-  4: 'Fully compliant',
-};
-
-function scoreColor(score: number): string {
-  if (score === 1) return '#ff0000';
-  if (score === 2) return '#ffc000';
-  if (score === 3) return '#81b848';
-  return '#538135';
-}
+import { SCORE_LABELS, scoreColor } from '../utils/scores';
 
 export default function ValidationDetail() {
   const { validationId } = useParams<{ validationId: string }>();
@@ -226,15 +213,7 @@ export default function ValidationDetail() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const headers: Record<string, string> = {};
-      const userId = getCurrentUserId();
-      if (userId) headers['X-User-Id'] = userId;
-      const res = await fetch(`/api/cycles/${cycle.id}/validations/${validation.id}/attachments`, { method: 'POST', body: formData, headers });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const saved = await res.json();
+      const saved = await api.upload<Attachment>(`/cycles/${cycle.id}/validations/${validation.id}/attachments`, formData);
       setValAttachments(prev => [...prev, saved]);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Upload failed');
@@ -289,8 +268,12 @@ export default function ValidationDetail() {
   const isSeniorValidator = currentUser?.role === 'Senior Validator';
   const isValidator = currentUser?.role === 'Validator';
 
-  // Editing is allowed for Validators when status is in_review or rejected
-  const canEdit = isValidator && (isInReview || isRejected);
+  // Justification and Additional Controls are Validator-only
+  const canEditFields = isValidator && (isInReview || isRejected);
+  // Attachments and other actions still available to Senior Validators on pending_approval
+  const canEdit = canEditFields || (isSeniorValidator && isPendingApproval);
+  // Score can only be changed by Validators — Senior Validators see it read-only
+  const canEditScore = isValidator && (isInReview || isRejected);
   const hasReturnedResponses = responses.some(r => r.status === 'returned');
 
   // Section title based on status
@@ -524,7 +507,7 @@ export default function ValidationDetail() {
         {/* Validation score picker / display */}
         <div style={{ marginBottom: 20 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 10 }}>Validation Score</div>
-          {!canEdit ? (
+          {!canEditScore ? (
             validation.validation_score !== null ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{
@@ -581,7 +564,7 @@ export default function ValidationDetail() {
         {/* Justification */}
         <div style={{ marginBottom: 16 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Justification</div>
-          {!canEdit ? (
+          {!canEditFields ? (
             <div style={{
               padding: '10px 12px', background: 'var(--panel2)',
               border: '1px solid var(--line)', borderRadius: 6,
@@ -615,7 +598,7 @@ export default function ValidationDetail() {
         {/* Additional Controls */}
         <div style={{ marginBottom: 20 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Additional Controls</div>
-          {!canEdit ? (
+          {!canEditFields ? (
             <div style={{
               padding: '10px 12px', background: 'var(--panel2)',
               border: '1px solid var(--line)', borderRadius: 6,

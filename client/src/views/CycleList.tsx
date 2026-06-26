@@ -33,6 +33,7 @@ export default function CycleList({ currentUser }: Props) {
   const [checklistMenuOpen, setChecklistMenuOpen] = useState<number | null>(null);
   const checklistFileRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ cycleId: number; action: string } | null>(null);
   const navigate = useNavigate();
 
   const role = currentUser?.role;
@@ -52,7 +53,7 @@ export default function CycleList({ currentUser }: Props) {
       return 'Approved — waiting for a Validator to distribute.';
     }
     if (c.status === 'distributed') {
-      if (role === 'Validator') return 'BUs are filling in their responses. You can close this cycle when ready.';
+      if (role === 'Validator') return 'BUs are filling in their responses. You can close this cycle once all responses are submitted and all validations are approved.';
       return 'Active — BUs are responding.';
     }
     if (c.status === 'closed') return 'This cycle is closed. View reports for results.';
@@ -97,17 +98,20 @@ export default function CycleList({ currentUser }: Props) {
   }, [checklistMenuOpen]);
 
   async function handleAction(cycleId: number, action: string, body?: object) {
+    if (pendingAction) return;
     setActionError(null);
+    setPendingAction({ cycleId, action });
     try {
-      await api.put(`/cycles/${cycleId}/${action}`, body);
       const pending = (commentInput[cycleId] ?? '').trim();
       if (pending) {
         await api.post(`/cycles/${cycleId}/comments`, { body: pending });
         setCommentInput(prev => ({ ...prev, [cycleId]: '' }));
       }
-      await load();
+      await api.put(`/cycles/${cycleId}/${action}`, body);
+      navigate('/');
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Action failed');
+      setPendingAction(null);
     }
   }
 
@@ -328,10 +332,12 @@ export default function CycleList({ currentUser }: Props) {
                             <button
                               className="btn primary"
                               onClick={() => handleAction(c.id, 'submit')}
-                              disabled={!c.checklist_file}
+                              disabled={!c.checklist_file || !!pendingAction}
                               title={!c.checklist_file ? 'Upload a checklist file before submitting' : undefined}
                             >
-                              Submit for Approval
+                              {pendingAction?.cycleId === c.id && pendingAction?.action === 'submit'
+                                ? 'Submitting…'
+                                : 'Submit for Approval'}
                             </button>
                           </div>
                           <button className="btn" onClick={() => toggleComments(c.id)}>
@@ -352,11 +358,11 @@ export default function CycleList({ currentUser }: Props) {
                               style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}
                             />
                             <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="btn primary" onClick={() => handleAction(c.id, 'approve')}>
-                                Approve
+                              <button className="btn primary" onClick={() => handleAction(c.id, 'approve')} disabled={!!pendingAction}>
+                                {pendingAction?.cycleId === c.id && pendingAction?.action === 'approve' ? 'Approving…' : 'Approve'}
                               </button>
-                              <button className="btn danger" onClick={() => handleAction(c.id, 'reject')}>
-                                Reject
+                              <button className="btn danger" onClick={() => handleAction(c.id, 'reject', { rejection_comment: (commentInput[c.id] ?? '').trim() || null })} disabled={!!pendingAction}>
+                                {pendingAction?.cycleId === c.id && pendingAction?.action === 'reject' ? 'Rejecting…' : 'Reject'}
                               </button>
                             </div>
                           </div>
@@ -431,8 +437,14 @@ export default function CycleList({ currentUser }: Props) {
                       {/* Validator: distribute an approved cycle */}
                       {c.status === 'published' && role === 'Validator' && (
                         <>
-                          <button className="btn primary" onClick={() => handleAction(c.id, 'distribute')}>
-                            Distribute
+                          <button
+                            className="btn primary"
+                            onClick={() => handleAction(c.id, 'distribute')}
+                            disabled={!!pendingAction}
+                          >
+                            {pendingAction?.cycleId === c.id && pendingAction?.action === 'distribute'
+                              ? 'Distributing…'
+                              : 'Distribute'}
                           </button>
                           {c.checklist_file && (
                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
@@ -457,7 +469,9 @@ export default function CycleList({ currentUser }: Props) {
 
                       {/* Validator: close a distributed cycle */}
                       {c.status === 'distributed' && role === 'Validator' && (
-                        <button className="btn danger" onClick={() => handleAction(c.id, 'close')}>Close</button>
+                        <button className="btn danger" onClick={() => handleAction(c.id, 'close')} disabled={!!pendingAction}>
+                          {pendingAction?.cycleId === c.id && pendingAction?.action === 'close' ? 'Closing…' : 'Close'}
+                        </button>
                       )}
 
                       {c.status === 'closed' && (
@@ -620,14 +634,22 @@ export default function CycleList({ currentUser }: Props) {
                       </div>
                       {(role === 'Validator' || role === 'Senior Validator') && (c.status === 'draft' || c.status === 'pending_approval' || (c.status === 'published' && role === 'Senior Validator')) && (
                         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                          <textarea
-                            value={commentInput[c.id] ?? ''}
-                            onChange={e => setCommentInput(prev => ({ ...prev, [c.id]: e.target.value }))}
-                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handlePostComment(c.id); }}
-                            rows={2}
-                            placeholder="Write a comment… (Ctrl+Enter to send)"
-                            style={{ flex: 1, resize: 'vertical', fontSize: 13 }}
-                          />
+                          <div style={{ flex: 1 }}>
+                            <textarea
+                              value={commentInput[c.id] ?? ''}
+                              onChange={e => { if (e.target.value.length <= 500) setCommentInput(prev => ({ ...prev, [c.id]: e.target.value })); }}
+                              onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handlePostComment(c.id); }}
+                              rows={2}
+                              placeholder="Write a comment… (Ctrl+Enter to send)"
+                              style={{
+                                width: '100%', resize: 'vertical', fontSize: 13,
+                                border: '1px solid ' + ((commentInput[c.id] ?? '').length >= 500 ? 'var(--danger)' : 'var(--line)'),
+                              }}
+                            />
+                            {(commentInput[c.id] ?? '').length >= 500 && (
+                              <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum character limit reached</div>
+                            )}
+                          </div>
                           <button
                             className="btn primary"
                             onClick={() => handlePostComment(c.id)}
@@ -701,11 +723,17 @@ export default function CycleList({ currentUser }: Props) {
                 <label>Description <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
                 <textarea
                   value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  onChange={e => { if (e.target.value.length <= 1000) setForm(f => ({ ...f, description: e.target.value })); }}
                   rows={3}
-                  style={{ width: '100%', resize: 'vertical' }}
+                  style={{
+                    width: '100%', resize: 'vertical',
+                    border: '1px solid ' + (form.description.length >= 1000 ? 'var(--danger)' : 'var(--line)'),
+                  }}
                   placeholder="Brief description of this cycle's scope or objectives…"
                 />
+                {form.description.length >= 1000 && (
+                  <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>Maximum character limit reached</div>
+                )}
               </div>
               {actionError && (
                 <div style={{ color: 'var(--danger)', fontSize: 13 }}>{actionError}</div>

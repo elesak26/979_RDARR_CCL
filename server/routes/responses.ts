@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { query } from '../db';
 import { logAudit } from '../audit';
+import { notifyRole, notifyBuResponders } from '../notify';
 
 const router = Router();
 
@@ -34,8 +35,11 @@ router.get(
       const params: unknown[] = [cycleId];
 
       if (bu_code) {
-        sql += ` AND r.bu_code = $2`;
-        params.push(bu_code);
+        // Use the user's full unit_codes array so a Responder with multiple sub-codes (e.g. 961-IRRBB,
+        // 961-Liquidity, 961-Market) sees all their responses with a single bu_code= query param.
+        const codes = req.user?.unit_codes?.length ? req.user.unit_codes : [bu_code];
+        sql += ` AND r.bu_code = ANY($2::text[])`;
+        params.push(codes);
       }
 
       sql += ' ORDER BY q.item_number, r.bu_code, r.material_risk NULLS FIRST';
@@ -189,6 +193,17 @@ router.put(
       }
 
       logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id } });
+
+      // Notify Validators that there are items ready for review
+      const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
+      const cycleName = cycleRow.rows[0]?.name ?? `Cycle ${cycleId}`;
+      notifyRole('Validator',
+        `New validation items ready — ${cycleName}`,
+        `Items submitted by ${bu_code} are now ready for your validation in cycle "${cycleName}".`,
+        parseInt(String(cycleId), 10),
+        `/validation`
+      ).catch(() => {});
+
       res.json(result.rows[0]);
     } catch (err) {
       next(err);
@@ -232,6 +247,16 @@ router.put(
       );
 
       logAudit({ action: 'response_returned', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, return_comment: return_comment ?? null } });
+
+      // Notify Responders for this BU that their response was returned
+      const cycleRowR = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
+      const cycleNameR = cycleRowR.rows[0]?.name ?? `Cycle ${cycleId}`;
+      notifyBuResponders(bu_code, parseInt(String(cycleId), 10),
+        `Response returned for revision — ${cycleNameR}`,
+        `A response for question #${question_id} in cycle "${cycleNameR}" has been returned to you for revision.`,
+        `/assignments/${result.rows[0].id}`
+      ).catch(() => {});
+
       res.json(result.rows[0]);
     } catch (err) {
       next(err);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
-import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { api, setCurrentUserId, getCurrentUserId } from '../api/client';
 import { getIdentity, identityLabel, isAuthEnabled, logout } from '../auth/oidc';
 import type { User, UserRole } from '../types';
@@ -10,6 +10,7 @@ interface AppNotification {
   title: string;
   body: string;
   cycle_id: number | null;
+  link: string | null;
   is_read: boolean;
   created_at: string;
 }
@@ -18,6 +19,7 @@ function NotificationBell({ userId }: { userId: string | undefined }) {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [open, setOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   const fetchNotifications = useCallback(async () => {
     if (!userId) return;
@@ -52,14 +54,14 @@ function NotificationBell({ userId }: { userId: string | undefined }) {
   async function markRead(id: number) {
     try {
       await api.put(`/notifications/${id}/read`);
-      setItems(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+      setItems(prev => prev.filter(n => n.id !== id));
     } catch { /* ignore */ }
   }
 
   async function markAllRead() {
     try {
       await api.put('/notifications/read-all');
-      setItems(prev => prev.map(n => ({ ...n, is_read: true })));
+      setItems([]);
     } catch { /* ignore */ }
   }
 
@@ -119,16 +121,25 @@ function NotificationBell({ userId }: { userId: string | undefined }) {
           ) : items.map(n => (
             <div
               key={n.id}
-              onClick={() => { if (!n.is_read) markRead(n.id); }}
+              onClick={() => {
+                markRead(n.id);
+                if (n.link) {
+                  setOpen(false);
+                  navigate(n.link);
+                }
+              }}
               style={{
                 padding: '10px 14px',
                 borderBottom: '1px solid var(--border)',
-                background: n.is_read ? 'transparent' : 'rgba(0,163,176,.08)',
-                cursor: n.is_read ? 'default' : 'pointer',
+                background: 'rgba(0,163,176,.08)',
+                cursor: n.link ? 'pointer' : 'default',
               }}
             >
-              <div style={{ fontWeight: n.is_read ? 400 : 700, fontSize: 13, marginBottom: 3 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>
                 {n.title}
+                {n.link && (
+                  <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--accent)', opacity: 0.8 }}>→</span>
+                )}
               </div>
               <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.4 }}>
                 {n.body}
@@ -153,6 +164,8 @@ const ValidationDetail = lazy(() => import('../views/ValidationDetail'));
 const CycleList = lazy(() => import('../views/CycleList'));
 const UserManagement = lazy(() => import('../views/UserManagement'));
 const Reports = lazy(() => import('../views/Reports'));
+const ValidationOverview = lazy(() => import('../views/ValidationOverview'));
+const ValidationOverviewDetail = lazy(() => import('../views/ValidationOverviewDetail'));
 
 function hasRole(user: User | null, ...roles: UserRole[]): boolean {
   if (!user) return false;
@@ -335,8 +348,12 @@ export default function App() {
               <NavLink to="/assignments">📝 My Assignments</NavLink>
             )}
 
-            {hasRole(currentUser, 'Validator', 'Senior Validator') && (
+            {hasRole(currentUser, 'Validator') && (
               <NavLink to="/validation">✅ Validation Actions</NavLink>
+            )}
+
+            {hasRole(currentUser, 'Senior Validator') && (
+              <NavLink to="/validation-overview">📋 Validation Overview</NavLink>
             )}
 
             {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') && (
@@ -371,15 +388,32 @@ export default function App() {
                 </>
               )}
 
-              {hasRole(currentUser, 'Admin', 'Validator', 'Senior Validator') ? (
+              {hasRole(currentUser, 'Admin', 'Validator') ? (
                 <>
                   <Route path="/validation" element={<ValidationQueue />} />
+                  <Route path="/validation/:validationId" element={<ValidationDetail />} />
+                </>
+              ) : hasRole(currentUser, 'Senior Validator') ? (
+                <>
+                  <Route path="/validation" element={<Navigate to="/" replace />} />
                   <Route path="/validation/:validationId" element={<ValidationDetail />} />
                 </>
               ) : (
                 <>
                   <Route path="/validation" element={<Navigate to="/" replace />} />
                   <Route path="/validation/:validationId" element={<Navigate to="/" replace />} />
+                </>
+              )}
+
+              {hasRole(currentUser, 'Senior Validator') ? (
+                <>
+                  <Route path="/validation-overview" element={<ValidationOverview />} />
+                  <Route path="/validation-overview/:cycleId/:questionId" element={<ValidationOverviewDetail />} />
+                </>
+              ) : (
+                <>
+                  <Route path="/validation-overview" element={<Navigate to="/" replace />} />
+                  <Route path="/validation-overview/:cycleId/:questionId" element={<Navigate to="/" replace />} />
                 </>
               )}
 
