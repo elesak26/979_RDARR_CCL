@@ -141,7 +141,7 @@ function NotificationBell({ userId }: { userId: string | undefined }) {
                   <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--accent)', opacity: 0.8 }}>→</span>
                 )}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.4 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.4, fontWeight: 700 }}>
                 {n.body}
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, opacity: 0.7 }}>

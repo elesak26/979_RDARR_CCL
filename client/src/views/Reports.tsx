@@ -165,6 +165,7 @@ interface BURow {
   avg_validation_score: number | null;
   response_count: number;
   submitted_count: number;
+  validated_count: number;
 }
 
 interface ValidationRow {
@@ -653,124 +654,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     </div>
   );
 
-  // ── Validator / Senior Validator — Viewer-style layout ──────────────────────
-  if (!embedded && (currentUser?.role === 'Validator' || currentUser?.role === 'Senior Validator')) {
-    const CYCLE_META: Record<string, { label: string; accent: string; bg: string; clickable: boolean; hint?: string }> = {
-      distributed: { label: 'Active',    accent: 'var(--accent)', bg: 'var(--accent-light)',  clickable: true },
-      closed:      { label: 'Completed', accent: 'var(--ok)',     bg: 'rgba(40,167,69,.08)', clickable: true },
-    };
-
-    const sortedCycles = [...cycles].sort((a, b) => b.year - a.year || b.id - a.id);
-    const availableYears = [...new Set(sortedCycles.map(c => c.year))].sort((a, b) => b - a);
-    const effectiveYear = selectedYear ?? availableYears[0] ?? null;
-    const visibleCycles = effectiveYear !== null ? sortedCycles.filter(c => c.year === effectiveYear) : sortedCycles;
-
-    function CycleCard({ c }: { c: Cycle }) {
-      const meta = CYCLE_META[c.status] ?? { label: c.status, accent: 'var(--muted)', bg: 'var(--panel2)', clickable: false };
-      const isSelected = internalCycleId === c.id;
-      return (
-        <div
-          onClick={meta.clickable ? () => setInternalCycleId(c.id) : undefined}
-          style={{
-            background: isSelected ? meta.bg : 'var(--panel)',
-            border: `1px solid ${isSelected ? meta.accent : 'var(--line)'}`,
-            borderLeft: `4px solid ${meta.accent}`,
-            borderRadius: 'var(--radius2)',
-            boxShadow: isSelected ? 'var(--shadow-md)' : 'var(--shadow)',
-            padding: '14px 16px',
-            cursor: meta.clickable ? 'pointer' : 'default',
-            transition: 'box-shadow .15s, border-color .15s, background .15s',
-            display: 'flex', flexDirection: 'column', gap: 6,
-          }}
-          onMouseEnter={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-md)'; }}
-          onMouseLeave={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow)'; }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{
-              fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-              background: `${meta.accent === 'var(--muted)' ? 'var(--chip)' : meta.accent}18`,
-              color: meta.accent,
-            }}>
-              {meta.label}
-            </span>
-            {meta.clickable && (
-              <span style={{ fontSize: 11, color: meta.accent, fontWeight: 600 }}>
-                {isSelected ? '▾ Viewing' : 'View report →'}
-              </span>
-            )}
-            {!meta.clickable && (
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>{meta.hint ?? 'No report yet'}</span>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-          <strong style={{ fontSize: 22 }}>Reports</strong>
-          {availableYears.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                Validation Year
-              </span>
-              <div style={{
-                display: 'flex', alignItems: 'center', position: 'relative',
-                background: 'var(--panel)', border: '1px solid var(--line)',
-                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow-md)', overflow: 'hidden',
-              }}>
-                <div style={{ background: 'var(--accent-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-                  </svg>
-                </div>
-                <select
-                  value={effectiveYear ?? ''}
-                  onChange={e => { setSelectedYear(Number(e.target.value)); setInternalCycleId(null); }}
-                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, fontSize: 15, color: 'var(--text)', padding: '10px 36px 10px 14px', cursor: 'pointer', appearance: 'none', minWidth: 80 }}
-                >
-                  {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <div style={{ pointerEvents: 'none', position: 'absolute', right: 12, color: 'var(--muted)' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Cycle cards */}
-        {cycles.length === 0 ? (
-          <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)' }}>No active or completed cycles at this time.</div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 20 }}>
-            {visibleCycles.map(c => <CycleCard key={c.id} c={c} />)}
-            {visibleCycles.length === 0 && (
-              <div style={{ gridColumn: '1/-1', padding: '20px 0', color: 'var(--muted)', fontSize: 13 }}>
-                No cycles for {effectiveYear}.
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Inline report */}
-        {internalCycleId && (
-          <Reports currentUser={currentUser} embedded activeCycleId={internalCycleId} onCycleChange={setInternalCycleId} />
-        )}
-        {!internalCycleId && cycles.length > 0 && (
-          <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>
-            Select a cycle above to view its report.
-          </div>
-        )}
-      </div>
-    );
-  }
-
   // ── Derived data ────────────────────────────────────────────────────────────
 
   const submittedBus = summary?.scores_by_bu.filter(bu => bu.submitted_count > 0) ?? [];
@@ -783,7 +666,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     if (!summary) return 0;
     const total = summary.counts.total_questions ?? 0;
     if (total === 0) return 0;
-    return Math.min(100, Math.round((summary.counts.total_closed_questions / total) * 100));
+    return Math.min(100, Math.round((summary.counts.total_validated / total) * 100));
   })();
 
   const barChartData = (bcbsRows ?? summary?.scores_by_bcbs_principle ?? []).map(row => ({
@@ -879,6 +762,35 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           ) : null;
         })()}
+          {selectedCycle?.checklist_file && (
+            <button
+              className="btn"
+              onClick={() => {
+                const userId = getCurrentUserId();
+                const headers: Record<string, string> = {};
+                if (userId) headers['X-User-Id'] = userId;
+                fetch(`/api/cycles/${selectedCycle.id}/checklist`, { headers })
+                  .then(r => r.blob())
+                  .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = selectedCycle.checklist_original_name ?? `${selectedCycle.name}_checklist.xlsx`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+              }}
+              title="Download compliance checklist"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              Checklist
+            </button>
+          )}
           {summary && (
             <button
               className="btn"
@@ -995,7 +907,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <CompletionRing
                   pct={validationPct}
                   label="Validation"
-                  sublabel={`${summary.counts.total_closed_questions} / ${summary.counts.total_questions} questions closed`}
+                  sublabel={`${summary.counts.total_validated} / ${summary.counts.total_questions} questions`}
                 />
               </div>
 
@@ -1032,7 +944,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           ))}
 
           {/* ── Score legend ── */}
-          {(!viewerMode || selectedCycle?.status === 'closed') && (
+          {selectedCycle?.status === 'closed' && (
             <div style={{
               padding: '10px 16px', marginBottom: 20,
               background: 'var(--panel)', border: '1px solid var(--line)',
@@ -1044,7 +956,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           )}
 
           {/* ── Shared BU filter bar ── */}
-          {(!viewerMode || selectedCycle?.status === 'closed') && submittedBus.length > 0 && (
+          {selectedCycle?.status === 'closed' && submittedBus.length > 0 && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '10px 16px', marginBottom: 16,
@@ -1078,7 +990,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           )}
 
           {/* ── Deviation: Compliance vs Validation ── */}
-          {(!viewerMode || selectedCycle?.status === 'closed') && (() => {
+          {selectedCycle?.status === 'closed' && (() => {
             const thematicSource = thematicRows ?? summary.scores_by_thematic_area;
             const deviationRows = thematicSource
               .filter(r => r.avg_compliance_score !== null && r.avg_validation_score !== null)
@@ -1588,7 +1500,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           })()}
 
           {/* ── Consolidated Scores by Thematic Area 1 ── */}
-          {(!viewerMode || selectedCycle?.status === 'closed') && (() => {
+          {selectedCycle?.status === 'closed' && (() => {
             const rows = thematicRows ?? summary.scores_by_thematic_area;
             const compValues = rows.map(r => r.consolidated_compliance_score ?? r.avg_compliance_score).filter((v): v is number => v !== null);
             const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
@@ -1669,8 +1581,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
           {/* ── Charts row ── */}
           <div style={{ display: 'grid', gridTemplateColumns: radarData.length > 2 ? '1fr 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
-            {/* Bar chart — BCBS 239 Principle */}
-            {barChartData.length > 0 && !(viewerMode && selectedCycle?.status === 'distributed') && (
+            {/* Bar chart — BCBS 239 Principle (closed cycles only) */}
+            {barChartData.length > 0 && selectedCycle?.status === 'closed' && (
               <div style={{
                 background: 'var(--panel)', border: '1px solid var(--line)',
                 borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflow: 'hidden',
@@ -1804,42 +1716,52 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 10,
             }}>
               <span style={{ fontSize: 15 }}>🏢</span>
-              <strong style={{ fontSize: 13 }}>{viewerMode && selectedCycle?.status === 'distributed' ? 'Validation Cycle Progress Overview' : 'Business-RDARR Validation: Assessment Alignment'}</strong>
-              <span className="small" style={{ marginLeft: 'auto' }}>{summary.scores_by_bu.length} BUs</span>
+              <strong style={{ fontSize: 13 }}>
+                {selectedCycle?.status === 'closed' ? 'Business-RDARR Validation: Assessment Alignment' : 'Respondent-RDARR Validation: Assessment Alignment'}
+              </strong>
+              <span className="small" style={{ marginLeft: 'auto' }}>{summary.scores_by_bu.length} Respondents</span>
             </div>
             <table className="table">
               <thead>
                 <tr>
-                  <th style={{ width: 100 }}>Respondent</th>
-                  {selectedCycle?.status === 'closed'
-                    ? <th style={{ width: 220 }}>Avg Self Assessment Score</th>
-                    : <th style={{ width: 200 }}>Submission Progress</th>
-                  }
-                  {selectedCycle?.status !== 'closed' && (
-                    <th style={{ width: 80, textAlign: 'right' }}>Submitted</th>
-                  )}
-                  <th style={{ width: 220 }}>{selectedCycle?.status === 'closed' ? 'Avg Consolidated Validation' : 'Avg Compliance'}</th>
-                  {selectedCycle?.status !== 'closed' && (
-                    <th style={{ width: 100, textAlign: 'center' }}>Status</th>
+                  <th>Respondent</th>
+                  {selectedCycle?.status === 'closed' ? (
+                    <>
+                      <th style={{ width: 220 }}>Avg Self Assessment Score</th>
+                      <th style={{ width: 220 }}>Avg Consolidated Validation</th>
+                    </>
+                  ) : (
+                    <>
+                      <th style={{ width: 200 }}>Submission Progress</th>
+                      <th style={{ width: 100, textAlign: 'right' }}>Submitted</th>
+                      <th style={{ width: 200 }}>Validation Progress</th>
+                      <th style={{ width: 100, textAlign: 'right' }}>In Validation</th>
+                      <th style={{ width: 110, textAlign: 'center' }}>Status</th>
+                    </>
                   )}
                 </tr>
               </thead>
               <tbody>
                 {summary.scores_by_bu.length === 0 && (
-                  <tr><td colSpan={selectedCycle?.status === 'closed' ? 3 : 5} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
+                  <tr><td colSpan={selectedCycle?.status === 'closed' ? 3 : 6} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
                 )}
                 {(() => {
-                  // Merge 006 + 956 into one Finance Reporting row; drop 006-956 pass-through
+                  // Merge 006 + 956 into one Finance Reporting row.
+                  // If the DB returns them as separate codes, merge them.
+                  // If the DB already returns a combined '006-956' row, use it directly (renamed to '006').
                   const FINANCE_CODES = new Set(['006', '956']);
-                  const financeRows = summary.scores_by_bu.filter(r => FINANCE_CODES.has(r.bu_code));
+                  const separateFinanceRows = summary.scores_by_bu.filter(r => FINANCE_CODES.has(r.bu_code));
+                  const combinedFinanceRow  = summary.scores_by_bu.find(r => r.bu_code === '006-956');
+                  const financeRows = separateFinanceRows.length > 0 ? separateFinanceRows : (combinedFinanceRow ? [combinedFinanceRow] : []);
                   const mergedFinance: BURow | null = financeRows.length > 0 ? (() => {
                     const totalResp = financeRows.reduce((s, r) => s + r.response_count, 0);
                     const totalSub  = financeRows.reduce((s, r) => s + r.submitted_count, 0);
+                    const totalVal  = financeRows.reduce((s, r) => s + r.validated_count, 0);
                     const wAvgComp = financeRows.every(r => r.avg_compliance_score === null) ? null
                       : financeRows.reduce((s, r) => s + (r.avg_compliance_score ?? 0) * r.submitted_count, 0) / Math.max(totalSub, 1);
                     const wAvgVal  = financeRows.every(r => r.avg_validation_score === null) ? null
                       : financeRows.reduce((s, r) => s + (r.avg_validation_score ?? 0) * r.response_count, 0) / Math.max(totalResp, 1);
-                    return { bu_code: '006', avg_compliance_score: wAvgComp, avg_validation_score: wAvgVal, response_count: totalResp, submitted_count: totalSub };
+                    return { bu_code: '006', avg_compliance_score: wAvgComp, avg_validation_score: wAvgVal, response_count: totalResp, submitted_count: totalSub, validated_count: totalVal };
                   })() : null;
                   const displayRows: BURow[] = [
                     ...summary.scores_by_bu.filter(r => !FINANCE_CODES.has(r.bu_code) && r.bu_code !== '006-956'),
@@ -1847,74 +1769,80 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   ].sort((a, b) => a.bu_code.localeCompare(b.bu_code));
 
                   return displayRows.map(row => {
-                  const pct = row.response_count > 0
-                    ? Math.round((row.submitted_count / row.response_count) * 100)
-                    : 0;
-                  const done = pct === 100 && row.response_count > 0;
-                  return (
-                    <tr key={row.bu_code}>
-                      <td>
-                        <span style={{
-                          display: 'inline-block', padding: '2px 8px',
-                          borderRadius: 4, background: 'var(--chip)',
-                          fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
-                          border: '1px solid var(--line)', color: 'var(--text)',
-                        }}>
-                          {row.bu_code === '006' ? 'Finance Reporting (006-956)' : buName(row.bu_code)}
-                        </span>
-                      </td>
-                      {selectedCycle?.status === 'closed' ? (
-                        <td><ScoreBar value={row.avg_compliance_score} /></td>
-                      ) : (
-                        <>
-                          <td>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ flex: 1, height: 7, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
-                                <div style={{
-                                  height: '100%', width: `${pct}%`,
-                                  background: completionColor(pct), borderRadius: 4,
-                                  transition: 'width .4s ease',
-                                }} />
-                              </div>
-                              <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{pct}%</span>
-                            </div>
-                          </td>
-                          <td style={{ textAlign: 'right', fontSize: 13 }}>
-                            <span style={{ color: done ? 'var(--ok)' : 'var(--text)', fontWeight: done ? 700 : 400 }}>
-                              {row.submitted_count}
-                            </span>
-                            <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
-                          </td>
-                        </>
-                      )}
-                      <td>
-                        {selectedCycle?.status === 'closed'
-                          ? <ScoreBar value={row.avg_validation_score} />
-                          : row.avg_compliance_score !== null
-                            ? <ScoreBar value={row.avg_compliance_score} />
-                            : <span style={{ color: 'var(--muted)', fontSize: 12, fontStyle: 'italic' }}>
-                                {row.submitted_count === 0 ? 'Not started' : 'No score yet'}
-                              </span>
-                        }
-                      </td>
-                      {selectedCycle?.status !== 'closed' && (
-                        <td style={{ textAlign: 'center' }}>
-                          {done ? (
-                            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: 'rgba(40,167,69,.12)', color: 'var(--ok)' }}>
-                              ✓ Complete
-                            </span>
-                          ) : row.submitted_count === 0 ? (
-                            <span style={{ fontSize: 11, color: 'var(--muted)' }}>Pending</span>
-                          ) : (
-                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: 'rgba(255,193,7,.12)', color: '#856404' }}>
-                              In progress
-                            </span>
-                          )}
+                    const subPct = row.response_count > 0
+                      ? Math.round((row.submitted_count / row.response_count) * 100)
+                      : 0;
+                    const valPct = row.response_count > 0
+                      ? Math.round((row.validated_count / row.response_count) * 100)
+                      : 0;
+                    const allSubmitted = subPct === 100 && row.response_count > 0;
+                    const allValidated = valPct === 100 && row.response_count > 0;
+
+                    const statusBadge = (() => {
+                      if (allValidated) return { label: '✓ Validated', bg: 'rgba(40,167,69,.12)', color: 'var(--ok)' };
+                      if (row.validated_count > 0) return { label: 'In Validation', bg: 'rgba(0,123,133,.10)', color: 'var(--accent)' };
+                      if (allSubmitted) return { label: '✓ Submitted', bg: 'rgba(40,167,69,.08)', color: 'var(--ok)' };
+                      if (row.submitted_count > 0) return { label: 'In Progress', bg: 'rgba(255,193,7,.12)', color: '#856404' };
+                      return { label: 'Pending', bg: 'transparent', color: 'var(--muted)' };
+                    })();
+
+                    const ProgressBar = ({ pct, color }: { pct: number; color: string }) => (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ flex: 1, height: 7, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width .4s ease' }} />
+                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{pct}%</span>
+                      </div>
+                    );
+
+                    return (
+                      <tr key={row.bu_code}>
+                        <td>
+                          <span style={{
+                            display: 'inline-block', padding: '2px 8px',
+                            borderRadius: 4, background: 'var(--chip)',
+                            fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+                            border: '1px solid var(--line)', color: 'var(--text)',
+                          }}>
+                            {row.bu_code === '006' ? 'Finance Reporting (006-956)' : buName(row.bu_code)}
+                          </span>
                         </td>
-                      )}
-                    </tr>
-                  );
-                });
+                        {selectedCycle?.status === 'closed' ? (
+                          <>
+                            <td><ScoreBar value={row.avg_compliance_score} /></td>
+                            <td><ScoreBar value={row.avg_validation_score} /></td>
+                          </>
+                        ) : (
+                          <>
+                            <td><ProgressBar pct={subPct} color={completionColor(subPct)} /></td>
+                            <td style={{ textAlign: 'right', fontSize: 13 }}>
+                              <span style={{ color: allSubmitted ? 'var(--ok)' : 'var(--text)', fontWeight: allSubmitted ? 700 : 400 }}>
+                                {row.submitted_count}
+                              </span>
+                              <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
+                            </td>
+                            <td><ProgressBar pct={valPct} color="var(--accent)" /></td>
+                            <td style={{ textAlign: 'right', fontSize: 13 }}>
+                              <span style={{ color: allValidated ? 'var(--ok)' : 'var(--text)', fontWeight: allValidated ? 700 : 400 }}>
+                                {row.validated_count}
+                              </span>
+                              <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <span style={{
+                                fontSize: 11, fontWeight: 700, padding: '2px 8px',
+                                borderRadius: 999,
+                                background: statusBadge.bg,
+                                color: statusBadge.color,
+                              }}>
+                                {statusBadge.label}
+                              </span>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  });
                 })()}
               </tbody>
             </table>

@@ -25,9 +25,25 @@ router.get(
       }>(
         `SELECT
            (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)::text                      AS total_questions,
-           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1)::text                                 AS total_submitted,
-           COUNT(v.id) FILTER (WHERE v.status IN ('in_review','pending_approval'))::text                                   AS total_validated,
-           COUNT(v.id) FILTER (WHERE v.status = 'closed')::text                                                            AS total_closed,
+           (SELECT COUNT(DISTINCT qa.question_id)
+            FROM question_applicability qa
+            WHERE qa.cycle_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM question_applicability qa2
+              LEFT JOIN responses r ON r.cycle_id=qa2.cycle_id AND r.question_id=qa2.question_id AND r.bu_code=qa2.bu_code
+              WHERE qa2.cycle_id=qa.cycle_id AND qa2.question_id=qa.question_id
+                AND (r.id IS NULL OR r.status <> 'submitted')
+            ))::text                                                                                                            AS total_submitted,
+           (SELECT COUNT(DISTINCT r.question_id)
+            FROM responses r
+            WHERE r.cycle_id = $1 AND r.status = 'submitted'
+            AND NOT EXISTS (
+              SELECT 1 FROM responses r2
+              LEFT JOIN validations v ON v.cycle_id = r2.cycle_id AND v.question_id = r2.question_id AND v.bu_code = r2.bu_code
+              WHERE r2.cycle_id = r.cycle_id AND r2.question_id = r.question_id AND r2.status = 'submitted'
+                AND (v.id IS NULL OR v.validation_score IS NULL)
+            ))::text                                                                                                            AS total_validated,
+           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed')::text           AS total_closed,
            (SELECT COUNT(DISTINCT qa.question_id)
             FROM question_applicability qa
             WHERE qa.cycle_id = $1
@@ -38,12 +54,10 @@ router.get(
               WHERE qa2.cycle_id = qa.cycle_id AND qa2.question_id = qa.question_id
                 AND (v.id IS NULL OR v.status <> 'closed')
             ))::text                                                                                                        AS total_closed_questions,
-           COUNT(v.id)::text                                                                                                AS total_validations,
-           COUNT(v.id) FILTER (WHERE v.status IN ('closed','rejected','returned'))::text                                   AS total_actioned,
+           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1)::text                                                    AS total_validations,
+           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status IN ('closed','rejected','returned'))::text     AS total_actioned,
            (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)::text                                         AS total_qa_rows,
-           (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)::text                          AS total_respondents
-         FROM validations v
-         WHERE v.cycle_id = $1`,
+           (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)::text                          AS total_respondents`,
         [cycleId]
       );
 
@@ -165,6 +179,7 @@ router.get(
         avg_validation_score: string;
         response_count: string;
         submitted_count: string;
+        validated_count: string;
       }>(
         `WITH per_question_bu AS (
            SELECT
@@ -175,7 +190,8 @@ router.get(
              SUM(COALESCE(r.weight, 1.0)) FILTER (WHERE r.status = 'submitted')                AS comp_weight,
              MAX(v.validation_score)                                                             AS validation_score,
              COUNT(r.id)                                                                         AS r_count,
-             COUNT(r.id) FILTER (WHERE r.status = 'submitted')                                  AS r_submitted
+             COUNT(r.id) FILTER (WHERE r.status = 'submitted')                                  AS r_submitted,
+             MAX(CASE WHEN v.validation_score IS NOT NULL THEN 1 ELSE 0 END) AS has_validation
            FROM responses r
            LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
            WHERE r.cycle_id = $1
@@ -186,7 +202,8 @@ router.get(
            ROUND(SUM(compliance_score * comp_weight) / NULLIF(SUM(comp_weight), 0), 2)::text                                                                                   AS avg_compliance_score,
            ROUND(SUM(validation_score * comp_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN comp_weight ELSE 0 END), 0), 2)::text AS avg_validation_score,
            SUM(r_count)::text                                                                                                                                                   AS response_count,
-           SUM(r_submitted)::text                                                                                                                                               AS submitted_count
+           SUM(r_submitted)::text                                                                                                                                               AS submitted_count,
+           SUM(has_validation)::text                                                                                                                                            AS validated_count
          FROM per_question_bu
          GROUP BY bu_code
          ORDER BY bu_code`,
@@ -300,6 +317,7 @@ router.get(
           avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
           response_count:       parseInt(r.response_count, 10),
           submitted_count:      parseInt(r.submitted_count, 10),
+          validated_count:      parseInt(r.validated_count ?? '0', 10),
         })),
         validation_vs_compliance: comparisonResult.rows.map((r) => ({
           question_id:          r.question_id,

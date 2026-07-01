@@ -90,7 +90,8 @@ export default function Dashboard({ currentUser }: Props) {
             : Promise.resolve<Response[][]>([]),
         ]);
         setValidations(valArrays.flat());
-        setResponses(respArrays.flat());
+        const seen = new Set<number>();
+        setResponses(respArrays.flat().filter(r => { if (seen.has(r.id)) return false; seen.add(r.id); return true; }));
       } else {
         setValidations([]);
         setResponses([]);
@@ -402,7 +403,7 @@ export default function Dashboard({ currentUser }: Props) {
             })()}
             <KpiCard
               label="Total Validations (active)"
-              value={hasActiveCycles ? new Set(validations.map(v => `${v.cycle_id}:${v.question_id}`)).size : 0}
+              value={hasActiveCycles ? validations.length : 0}
             />
             <KpiCard
               label="Closed Validations"
