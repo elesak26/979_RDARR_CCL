@@ -77,19 +77,20 @@ export default function MyAssignments({ currentUser }: Props) {
     try {
       const cycles = await api.get<Cycle[]>('/cycles');
       const distributed = cycles.filter(c => c.status === 'distributed');
-      setActiveCycles(distributed);
+      const allActive = cycles.filter(c => c.status === 'distributed' || c.status === 'closed');
+      setActiveCycles(allActive);
 
-      if (distributed.length === 0 || !activeBuCode) {
+      if (allActive.length === 0 || !activeBuCode) {
         setResponses([]);
         setLoading(false);
         return;
       }
 
-      // Default to URL-specified cycle, then first available
-      setSelectedCycleId(prev => prev ?? urlCycleId ?? distributed[0].id);
+      // Default to URL-specified cycle, then first distributed, then first available
+      setSelectedCycleId(prev => prev ?? urlCycleId ?? (distributed[0]?.id ?? allActive[0].id));
 
       const perCycle = await Promise.all(
-        distributed.map(c =>
+        allActive.map(c =>
           api.get<Response[]>(`/cycles/${c.id}/responses?bu_code=${encodeURIComponent(activeBuCode)}`).catch((): Response[] => [])
         )
       );
@@ -239,6 +240,7 @@ export default function MyAssignments({ currentUser }: Props) {
   const multiCycle = activeCycles.length > 1;
   const activeCycleId = selectedCycleId ?? activeCycles[0].id;
   const selectedCycle = activeCycles.find(c => c.id === activeCycleId) ?? activeCycles[0];
+  const isClosed = selectedCycle.status === 'closed';
 
   // All responses, scoped to the currently selected cycle
   const cycleResponses = responses.filter(r => r.cycle_id === activeCycleId);
@@ -266,6 +268,7 @@ export default function MyAssignments({ currentUser }: Props) {
     const sectionResponses = pool.filter(r => r.cycle_id === cycle.id);
     if (sectionResponses.length === 0) return null;
 
+    const cycleIsClosed = cycle.status === 'closed';
     const areas = Array.from(new Set(sectionResponses.map(r => r.thematic_area ?? 'General')));
 
     return (
@@ -289,7 +292,7 @@ export default function MyAssignments({ currentUser }: Props) {
               {areaResponses.map((r, idx) => {
                 const d = drafts[r.id] ?? { score: null, comments: '' };
                 const isSubmitted = r.status === 'submitted';
-                const isEditable = r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned';
+                const isEditable = !cycleIsClosed && (r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned');
                 const isOpen = expanded === r.id;
                 const atts = attachments[r.id] ?? [];
                 const isUploadingNow = uploading[r.id] ?? false;
@@ -635,26 +638,38 @@ export default function MyAssignments({ currentUser }: Props) {
           </span>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span className="small">
-            <span style={{ color: 'var(--warn)', fontWeight: 600 }}>{draftResponses.length}</span> pending ·{' '}
-            <span style={{ color: 'var(--ok)', fontWeight: 600 }}>{submittedResponses.length}</span> submitted
-          </span>
-          {!allSubmitted && (
-            <button
-              className="btn primary"
-              onClick={handleSubmitCycle}
-              disabled={submitAllBusy || !allScored || draftResponses.length === 0}
-              title={
-                !allScored
-                  ? 'Score all CCL items before submitting'
-                  : draftResponses.length === 0
-                  ? 'All items are already submitted'
-                  : `Submit ${selectedCycle.name} to RDARR for validation`
-              }
-              style={{ fontWeight: 600 }}
-            >
-              {submitAllBusy ? 'Submitting…' : 'Submit Self-Assessment to RDARR Validation Unit'}
-            </button>
+          {isClosed ? (
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+              background: 'rgba(40,167,69,.12)', color: 'var(--ok)',
+              border: '1px solid var(--ok)',
+            }}>
+              Cycle Closed — Read-only
+            </span>
+          ) : (
+            <>
+              <span className="small">
+                <span style={{ color: 'var(--warn)', fontWeight: 600 }}>{draftResponses.length}</span> pending ·{' '}
+                <span style={{ color: 'var(--ok)', fontWeight: 600 }}>{submittedResponses.length}</span> submitted
+              </span>
+              {!allSubmitted && (
+                <button
+                  className="btn primary"
+                  onClick={handleSubmitCycle}
+                  disabled={submitAllBusy || !allScored || draftResponses.length === 0}
+                  title={
+                    !allScored
+                      ? 'Score all CCL items before submitting'
+                      : draftResponses.length === 0
+                      ? 'All items are already submitted'
+                      : `Submit ${selectedCycle.name} to RDARR for validation`
+                  }
+                  style={{ fontWeight: 600 }}
+                >
+                  {submitAllBusy ? 'Submitting…' : 'Submit Self-Assessment to RDARR Validation Unit'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -701,7 +716,15 @@ export default function MyAssignments({ currentUser }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                     <strong style={{ fontSize: 13 }}>{c.name}</strong>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>{c.year}</span>
-                    {done && (
+                    {c.status === 'closed' ? (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '1px 6px',
+                        borderRadius: 999, background: 'rgba(40,167,69,.15)',
+                        color: 'var(--ok)', letterSpacing: '.3px',
+                      }}>
+                        CLOSED
+                      </span>
+                    ) : done ? (
                       <span style={{
                         fontSize: 10, fontWeight: 700, padding: '1px 6px',
                         borderRadius: 999, background: 'rgba(40,167,69,.15)',
@@ -709,7 +732,7 @@ export default function MyAssignments({ currentUser }: Props) {
                       }}>
                         ✓ DONE
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {/* Mini progress bar */}
@@ -734,7 +757,7 @@ export default function MyAssignments({ currentUser }: Props) {
       )}
 
       {/* Progress bar for selected cycle */}
-      {!allSubmitted && (
+      {!isClosed && !allSubmitted && (
         <div style={{ marginBottom: 16, padding: '10px 16px', background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 6 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span className="small" style={{ fontWeight: 600 }}>
@@ -763,7 +786,7 @@ export default function MyAssignments({ currentUser }: Props) {
       )}
 
       {/* Status filter tabs */}
-      {cycleResponses.length > 0 && (
+      {!isClosed && cycleResponses.length > 0 && (
         <div className="tabs" style={{ marginBottom: 16 }}>
           {([
             { key: 'all', label: `All (${cycleResponses.length})` },
@@ -808,7 +831,7 @@ export default function MyAssignments({ currentUser }: Props) {
       {renderCycleSection(selectedCycle, visibleResponses)}
 
       {/* Sticky footer submit bar */}
-      {!allSubmitted && draftResponses.length > 0 && (
+      {!isClosed && !allSubmitted && draftResponses.length > 0 && (
         <div style={{
           position: 'sticky', bottom: 0,
           padding: '12px 16px',

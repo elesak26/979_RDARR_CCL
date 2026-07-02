@@ -39,7 +39,6 @@ router.get(
          JOIN questions q ON q.id = v.question_id
          JOIN questionnaire_cycles c ON c.id = v.cycle_id
          WHERE v.cycle_id = $1
-           AND (c.status <> 'closed' OR v.status = 'closed')
          ORDER BY q.item_number, v.bu_code`,
         [cycleId]
       );
@@ -125,6 +124,12 @@ router.put(
       const justificationValue = isSeniorValidator ? null : (justification ?? null);
       const additionalControlsValue = isSeniorValidator ? null : (additional_controls ?? null);
 
+      const oldRow = await query<{ validation_score: number | null; justification: string | null }>(
+        `SELECT validation_score, justification FROM validations WHERE id = $1 AND cycle_id = $2`,
+        [id, cycleId]
+      );
+      const oldScore = oldRow.rows[0]?.validation_score ?? null;
+
       const result = await query(
         `UPDATE validations
          SET
@@ -149,7 +154,7 @@ router.put(
         res.status(404).json({ error: 'Validation not found' });
         return;
       }
-      logAudit({ action: 'validation_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, validation_score: result.rows[0].validation_score } });
+      logAudit({ action: 'validation_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, old_score: oldScore, new_score: result.rows[0].validation_score ?? null, justification: justificationValue ?? null, additional_controls: additionalControlsValue ?? null } });
       res.json(result.rows[0]);
     } catch (err) {
       next(err);
@@ -194,7 +199,7 @@ router.put(
         res.status(409).json({ error: 'Validation already completed by another user.' });
         return;
       }
-      logAudit({ action: 'validation_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id } });
+      logAudit({ action: 'validation_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null } });
 
       // Notify Senior Validators that a validation item is pending their approval
       const cycleRowV = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
@@ -322,7 +327,7 @@ router.put(
         actor_role: req.user?.role,
         timestamp: new Date().toISOString(),
       };
-      const result = await query<{ id: number }>(
+      const result = await query<{ id: number; validation_score: number | null }>(
         `UPDATE validations
          SET
            status              = 'closed',
@@ -331,14 +336,14 @@ router.put(
            updated_at          = now(),
            workflow_history    = workflow_history || $4::jsonb
          WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'
-         RETURNING id`,
+         RETURNING id, validation_score`,
         [cycleId, questionId, req.user?.id ?? null, JSON.stringify([historyEntry])]
       );
       if (result.rows.length === 0) {
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
         return;
       }
-      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true } });
+      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, new_score: result.rows[0]?.validation_score ?? null } });
 
       // Auto-close cycle if all validations are now closed
       const remaining = await query<{ cnt: string }>(
@@ -380,7 +385,7 @@ router.put(
         timestamp: new Date().toISOString(),
         comment: comment ?? null,
       };
-      const result = await query<{ id: number; item_number: number; bu_code: string }>(
+      const result = await query<{ id: number; item_number: number; bu_code: string; validation_score: number | null }>(
         `UPDATE validations
          SET
            status                   = 'rejected',
@@ -390,14 +395,14 @@ router.put(
            updated_at               = now(),
            workflow_history         = workflow_history || $5::jsonb
          WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'
-         RETURNING id, item_number, bu_code`,
+         RETURNING id, item_number, bu_code, validation_score`,
         [cycleId, questionId, req.user?.id ?? null, comment ?? null, JSON.stringify([historyEntry])]
       );
       if (result.rows.length === 0) {
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
         return;
       }
-      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, rejection_comment: comment ?? null } });
+      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, new_score: result.rows[0]?.validation_score ?? null, rejection_comment: comment ?? null } });
 
       // Notify Validators — send one notification per rejected validation so each links to its detail page
       const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
@@ -457,7 +462,7 @@ router.put(
         res.status(400).json({ error: 'Validation not found or not pending approval' });
         return;
       }
-      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id } });
+      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null } });
 
       // Auto-close cycle if all validations are now closed
       const remaining = await query<{ cnt: string }>(
@@ -519,7 +524,7 @@ router.put(
         res.status(400).json({ error: 'Validation not found or not pending approval' });
         return;
       }
-      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, rejection_comment: comment ?? null } });
+      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null, rejection_comment: comment ?? null } });
 
       // Notify Validators that a validation item was rejected and needs revision
       const cycleRowR = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
@@ -570,13 +575,22 @@ router.post(
       return;
     }
     try {
-      const { id } = req.params;
+      const { id, cycleId } = req.params;
+      const metaResult = await query<{ question_id: number; bu_code: string | null; cycle_name: string | null; item_number: number | null }>(
+        `SELECT v.question_id, v.bu_code, c.name AS cycle_name, q.item_number
+         FROM validations v
+         JOIN questionnaire_cycles c ON c.id = v.cycle_id
+         JOIN questions q ON q.id = v.question_id
+         WHERE v.id = $1 AND v.cycle_id = $2`,
+        [id, cycleId]
+      );
+      const meta = metaResult.rows[0];
       const result = await query(
         `INSERT INTO validation_attachments (validation_id, file_name, file_path, uploaded_by)
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [id, req.file.originalname, req.file.filename, req.user?.display_name ?? null]
       );
-      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), details: { file_name: req.file.originalname } });
+      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(cycleId, 10), details: { file_name: req.file.originalname, question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
       res.status(201).json(result.rows[0]);
     } catch (err) {
       next(err);

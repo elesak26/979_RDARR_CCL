@@ -22,16 +22,7 @@ router.get(
         JOIN questions q ON q.id = r.question_id
         JOIN questionnaire_cycles c ON c.id = r.cycle_id
         WHERE r.cycle_id = $1
-          AND (
-            c.status <> 'closed'
-            OR EXISTS (
-              SELECT 1 FROM validations v
-              WHERE v.cycle_id = r.cycle_id
-                AND v.question_id = r.question_id
-                AND v.bu_code = r.bu_code
-                AND v.status = 'closed'
-            )
-          )`;
+          AND (c.status <> 'closed' OR r.status = 'submitted')`;
       const params: unknown[] = [cycleId];
 
       if (bu_code) {
@@ -93,6 +84,12 @@ router.put(
         comments?: string;
       };
 
+      const oldRow = await query<{ compliance_score: number | null; comments: string | null }>(
+        `SELECT compliance_score, comments FROM responses WHERE id = $1 AND cycle_id = $2`,
+        [id, cycleId]
+      );
+      const oldScore = oldRow.rows[0]?.compliance_score ?? null;
+
       const result = await query(
         `UPDATE responses
          SET
@@ -111,7 +108,7 @@ router.put(
         res.status(400).json({ error: 'Response not found or not editable' });
         return;
       }
-      logAudit({ action: 'response_saved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, status: result.rows[0].status } });
+      logAudit({ action: 'response_saved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, status: result.rows[0].status, old_score: oldScore, new_score: result.rows[0].compliance_score ?? null, comments: comments ?? null } });
       res.json(result.rows[0]);
     } catch (err) {
       next(err);
@@ -131,13 +128,13 @@ router.put(
       const { cycleId, id } = req.params;
 
       // Submit the response
-      const result = await query<{ id: number; question_id: number; bu_code: string; status: string }>(
+      const result = await query<{ id: number; question_id: number; bu_code: string; status: string; compliance_score: number | null }>(
         `UPDATE responses
          SET status = 'submitted', submitted_at = now(), updated_at = now(),
              responder_id = COALESCE(responder_id, $3),
              responder_name = COALESCE(responder_name, $4)
          WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')
-         RETURNING id, question_id, bu_code, status`,
+         RETURNING id, question_id, bu_code, status, compliance_score`,
         [id, cycleId, req.user.id, req.user.display_name]
       );
 
@@ -192,7 +189,7 @@ router.put(
         );
       }
 
-      logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id } });
+      logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, new_score: result.rows[0].compliance_score ?? null } });
 
       // Notify Validators that there are items ready for review
       const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);

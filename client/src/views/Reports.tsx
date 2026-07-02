@@ -654,6 +654,121 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     </div>
   );
 
+  // ── Validator / Senior Validator — own cycle-card picker layout ─────────────
+  if (!embedded && (currentUser?.role === 'Validator' || currentUser?.role === 'Senior Validator')) {
+    const CYCLE_META: Record<string, { label: string; accent: string; bg: string; clickable: boolean; hint?: string }> = {
+      distributed: { label: 'Active',    accent: 'var(--accent)', bg: 'var(--accent-light)',  clickable: true },
+      closed:      { label: 'Completed', accent: 'var(--ok)',     bg: 'rgba(40,167,69,.08)', clickable: true },
+    };
+
+    const sortedCycles = [...cycles].sort((a, b) => b.year - a.year || b.id - a.id);
+    const availableYears = [...new Set(sortedCycles.map(c => c.year))].sort((a, b) => b - a);
+    const effectiveYear = selectedYear ?? availableYears[0] ?? null;
+    const visibleCycles = effectiveYear !== null ? sortedCycles.filter(c => c.year === effectiveYear) : sortedCycles;
+
+    function CycleCard({ c }: { c: Cycle }) {
+      const meta = CYCLE_META[c.status] ?? { label: c.status, accent: 'var(--muted)', bg: 'var(--panel2)', clickable: false };
+      const isSelected = internalCycleId === c.id;
+      return (
+        <div
+          onClick={meta.clickable ? () => setInternalCycleId(c.id) : undefined}
+          style={{
+            background: isSelected ? meta.bg : 'var(--panel)',
+            border: `1px solid ${isSelected ? meta.accent : 'var(--line)'}`,
+            borderLeft: `4px solid ${meta.accent}`,
+            borderRadius: 'var(--radius2)',
+            boxShadow: isSelected ? 'var(--shadow-md)' : 'var(--shadow)',
+            padding: '14px 16px',
+            cursor: meta.clickable ? 'pointer' : 'default',
+            transition: 'box-shadow .15s, border-color .15s, background .15s',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}
+          onMouseEnter={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-md)'; }}
+          onMouseLeave={e => { if (meta.clickable && !isSelected) (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow)'; }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+              background: `${meta.accent === 'var(--muted)' ? 'var(--chip)' : meta.accent}18`,
+              color: meta.accent,
+            }}>
+              {meta.label}
+            </span>
+            {meta.clickable && (
+              <span style={{ fontSize: 11, color: meta.accent, fontWeight: 600 }}>
+                {isSelected ? '▾ Viewing' : 'View report →'}
+              </span>
+            )}
+            {!meta.clickable && (
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>{meta.hint ?? 'No report yet'}</span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+          <strong style={{ fontSize: 22 }}>Reports</strong>
+          {availableYears.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                Validation Year
+              </span>
+              <div style={{
+                display: 'flex', alignItems: 'center', position: 'relative',
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow-md)', overflow: 'hidden',
+              }}>
+                <div style={{ background: 'var(--accent-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                </div>
+                <select
+                  value={effectiveYear ?? ''}
+                  onChange={e => { setSelectedYear(Number(e.target.value)); setInternalCycleId(null); }}
+                  style={{ border: 'none', outline: 'none', background: 'transparent', fontWeight: 700, fontSize: 15, color: 'var(--text)', padding: '10px 36px 10px 14px', cursor: 'pointer', appearance: 'none', minWidth: 80 }}
+                >
+                  {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <div style={{ pointerEvents: 'none', position: 'absolute', right: 12, color: 'var(--muted)' }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {cycles.length === 0 ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)' }}>No active or completed cycles at this time.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 20 }}>
+            {visibleCycles.map(c => <CycleCard key={c.id} c={c} />)}
+            {visibleCycles.length === 0 && (
+              <div style={{ gridColumn: '1/-1', padding: '20px 0', color: 'var(--muted)', fontSize: 13 }}>
+                No cycles for {effectiveYear}.
+              </div>
+            )}
+          </div>
+        )}
+
+        {internalCycleId && (
+          <Reports currentUser={currentUser} embedded activeCycleId={internalCycleId} onCycleChange={setInternalCycleId} />
+        )}
+        {!internalCycleId && cycles.length > 0 && (
+          <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>
+            Select a cycle above to view its report.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ── Derived data ────────────────────────────────────────────────────────────
 
   const submittedBus = summary?.scores_by_bu.filter(bu => bu.submitted_count > 0) ?? [];
@@ -826,8 +941,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
       {summary && selectedCycle && (
         <>
-          {/* ── Completion overview ── */}
-          {(selectedCycle.status === 'closed' ? (
+          {/* ── Completion overview (non-Admin only) ── */}
+          {currentUser?.role !== 'Admin' && (selectedCycle.status === 'closed' ? (
             <div style={{
               background: 'var(--panel)', border: '1px solid var(--line)',
               borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
@@ -1499,7 +1614,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             );
           })()}
 
-          {/* ── Consolidated Scores by Thematic Area 1 ── */}
+          {/* ── Summary of Consolidated Scores by Thematic Area ── */}
           {selectedCycle?.status === 'closed' && (() => {
             const rows = thematicRows ?? summary.scores_by_thematic_area;
             const compValues = rows.map(r => r.consolidated_compliance_score ?? r.avg_compliance_score).filter((v): v is number => v !== null);
@@ -1518,7 +1633,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                 }}>
                   <span style={{ fontSize: 15 }}>🗂️</span>
-                  <strong style={{ fontSize: 13 }}>Consolidated Scores by Thematic Area 1</strong>
+                  <strong style={{ fontSize: 13 }}>Summary of Consolidated Scores by Thematic Area</strong>
                   {thematicBuFilter !== 'all' && (
                     <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
                       {buName(thematicBuFilter)}
@@ -1533,7 +1648,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                           <th>Thematic Area</th>
                           <th style={{ textAlign: 'right', width: 80 }}>Questions</th>
                           <th style={{ width: 220 }}>Self Assessment</th>
-                          <th style={{ width: 220 }}>Consolidated Validation</th>
+                          <th style={{ width: 220 }}>Validation</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1705,8 +1820,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             )}
           </div>
 
-          {/* ── Scores by BU ── */}
-          <div style={{
+          {/* ── Scores by BU (non-Admin only) ── */}
+          {currentUser?.role !== 'Admin' && <div style={{
             background: 'var(--panel)', border: '1px solid var(--line)',
             borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
             marginBottom: 20, overflow: 'hidden',
@@ -1846,7 +1961,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 })()}
               </tbody>
             </table>
-          </div>
+          </div>}
 
           {/* ── Scores by Material Risk (removed) ── */}
           {false && (() => {
@@ -2094,7 +2209,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               </div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span className="small" style={{ color: 'var(--muted)' }}>Entity Type</span>
+              <span className="small" style={{ color: 'var(--muted)' }}>Event Type</span>
               <select value={auditEntityType} onChange={e => setAuditEntityType(e.target.value)} style={{ minWidth: 140 }}>
                 {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
@@ -2129,24 +2244,115 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             <table className="table" style={{ fontSize: 12 }}>
               <thead>
                 <tr>
-                  <th>Timestamp</th><th>Action</th><th>Actor</th><th>Role</th><th>Entity Type</th><th>Cycle</th><th>Details</th>
+                  <th style={{ whiteSpace: 'nowrap' }}>Timestamp</th>
+                  <th>Event</th>
+                  <th>Actor</th>
+                  <th>Role</th>
+                  <th>Cycle</th>
+                  <th>Subject</th>
+                  <th>Score</th>
+                  <th>Comment / Justification</th>
+                  <th>Additional Controls</th>
+                  <th>File</th>
                 </tr>
               </thead>
               <tbody>
-                {auditLoading && <tr><td colSpan={7} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
-                {!auditLoading && auditEntries.length === 0 && <tr><td colSpan={7} className="small" style={{ textAlign: 'center', padding: 24 }}>No audit entries found.</td></tr>}
+                {auditLoading && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
+                {!auditLoading && auditEntries.length === 0 && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No audit entries found.</td></tr>}
                 {!auditLoading && auditEntries.map(entry => {
-                  const detailsStr = entry.details ? JSON.stringify(entry.details) : '';
-                  const detailsTrunc = detailsStr.length > 80 ? detailsStr.substring(0, 80) + '…' : detailsStr;
+                  const d = entry.details ?? {};
+
+                  const ACTION_LABELS: Record<string, string> = {
+                    response_saved:                    'Score saved',
+                    response_submitted:                'Assessment submitted',
+                    response_returned:                 'Assessment returned to respondent',
+                    validation_updated:                'Validation score saved',
+                    validation_submitted_for_approval: 'Submitted for approval',
+                    validation_approved:               'Validation approved',
+                    validation_rejected:               'Validation rejected',
+                    validation_attachment_uploaded:    'Evidence file uploaded',
+                    attachment_uploaded:               'File uploaded',
+                    attachment_deleted:                'File deleted',
+                    cycle_created:                     'Cycle created',
+                    cycle_submitted_for_approval:      'Cycle submitted for approval',
+                    cycle_approved:                    'Cycle approved',
+                    cycle_rejected:                    'Cycle rejected',
+                    cycle_distributed:                 'Cycle distributed',
+                    cycle_closed:                      'Cycle closed',
+                    cycle_deleted:                     'Cycle deleted',
+                    checklist_uploaded:                'Checklist uploaded',
+                    applicability_assigned:            'BU assigned to question',
+                    applicability_removed:             'BU removed from question',
+                    user_created:                      'User created',
+                    user_updated:                      'User updated',
+                    user_enabled:                      'User enabled',
+                    user_disabled:                     'User disabled',
+                    user_deleted:                      'User deleted',
+                  };
+
+                  const SCORE_LABELS_AUDIT: Record<number, string> = { 1: '1 – Non-compliant', 2: '2 – Partially compliant', 3: '3 – Largely compliant', 4: '4 – Compliant' };
+                  const scoreLabel = (v: unknown) => v != null ? (SCORE_LABELS_AUDIT[Number(v)] ?? String(v)) : null;
+
+                  const questionLabel = d.item_number != null ? `Item ${d.item_number}` : d.question_id ? `Q${d.question_id}` : null;
+                  const subject = [
+                    d.bu_code   ? `BU ${d.bu_code}`              : null,
+                    questionLabel,
+                    d.bu_name   ? `(${d.bu_name})`               : null,
+                    d.display_name ? d.display_name as string     : null,
+                  ].filter(Boolean).join(' ') || '—';
+
+                  const comment = (d.comments as string | null) ?? (d.return_comment as string | null) ?? (d.rejection_comment as string | null) ?? (d.justification as string | null) ?? null;
+                  const additionalControls = (d.additional_controls as string | null) ?? null;
+                  const file    = (d.file_name as string | null) ?? null;
+
+                  // Show the score the user entered: prefer new_score, fall back to old_score
+                  const scoreVal = d.new_score != null ? d.new_score : (d.old_score != null ? d.old_score : null);
+                  const scoreStr = scoreLabel(scoreVal);
+                  const scoreNum = scoreVal != null ? Number(scoreVal) : null;
+
+                  const eventLabel = ACTION_LABELS[entry.action] ?? entry.action;
+
+                  const EVENT_COLOR: Record<string, string> = {
+                    response_submitted:                'var(--accent)',
+                    validation_approved:               'var(--ok)',
+                    validation_rejected:               'var(--danger)',
+                    cycle_closed:                      'var(--ok)',
+                    cycle_distributed:                 'var(--accent)',
+                    response_returned:                 'var(--warn)',
+                  };
+                  const eventColor = EVENT_COLOR[entry.action] ?? 'var(--text)';
+
+                  const scoreColor2 = scoreNum != null
+                    ? scoreNum <= 1.5 ? 'var(--danger)' : scoreNum <= 2.5 ? '#ffc000' : scoreNum <= 3.5 ? '#81b848' : 'var(--ok)'
+                    : 'var(--muted)';
+
                   return (
                     <tr key={entry.id}>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)' }}>{entry.created_at ? new Date(entry.created_at).toLocaleString() : '—'}</td>
-                      <td><strong>{entry.action}</strong></td>
-                      <td>{entry.actor_name ?? entry.actor_id ?? '—'}</td>
-                      <td>{entry.actor_role ?? '—'}</td>
-                      <td>{entry.entity_type ?? '—'}</td>
-                      <td>{entry.cycle_name ?? (entry.cycle_id ? String(entry.cycle_id) : '—')}</td>
-                      <td style={{ fontFamily: 'monospace', color: 'var(--muted)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={detailsStr}>{detailsTrunc}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 11 }}>
+                        {entry.created_at ? new Date(entry.created_at).toLocaleString() : '—'}
+                      </td>
+                      <td>
+                        <span style={{ fontWeight: 600, color: eventColor }}>{eventLabel}</span>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{entry.actor_name ?? entry.actor_id ?? '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)' }}>{entry.actor_role ?? '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{entry.cycle_name ?? (entry.cycle_id ? String(entry.cycle_id) : '—')}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{subject}</td>
+                      <td style={{ color: scoreColor2, fontWeight: scoreStr ? 600 : undefined }}>
+                        {scoreStr ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                      </td>
+                      <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={comment ?? ''}>
+                        {comment ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                      </td>
+                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={additionalControls ?? ''}>
+                        {additionalControls ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                      </td>
+                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file ?? ''}>
+                        {file
+                          ? <a href={`/api/audit-log/${entry.id}/file`} download={file} style={{ color: 'var(--accent)', textDecoration: 'underline' }}>{file}</a>
+                          : <span style={{ color: 'var(--muted)' }}>—</span>
+                        }
+                      </td>
                     </tr>
                   );
                 })}
