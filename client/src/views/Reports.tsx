@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, getCurrentUserId } from '../api/client';
 import type { Cycle, User } from '../types';
 import { useBuNames } from '../hooks/useBuNames';
+import { displayFileName } from '../utils/displayFileName';
 import AdminAnalytics from './AdminAnalytics';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -2347,9 +2348,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={additionalControls ?? ''}>
                         {additionalControls ?? <span style={{ color: 'var(--muted)' }}>—</span>}
                       </td>
-                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file ?? ''}>
+                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={displayFileName(file)}>
                         {file
-                          ? <a href={`/api/audit-log/${entry.id}/file`} download={file} style={{ color: 'var(--accent)', textDecoration: 'underline' }}>{file}</a>
+                          ? <a href={`/api/audit-log/${entry.id}/file`} download={file} style={{ color: 'var(--accent)', textDecoration: 'underline' }}>{displayFileName(file)}</a>
                           : <span style={{ color: 'var(--muted)' }}>—</span>
                         }
                       </td>
