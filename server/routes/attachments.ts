@@ -10,8 +10,13 @@ const router = Router();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('Could not create UPLOAD_DIR ' + UPLOAD_DIR, e); }
 
-// Multer parses multipart filenames as latin1; browsers send UTF-8, so re-decode.
-const decodeFilename = (name: string) => Buffer.from(name, 'latin1').toString('utf8');
+// Multer/busboy may deliver filenames as latin1-misread UTF-8 bytes.
+// Only re-decode if every char is ≤ U+00FF (the latin1 fingerprint);
+// if any char is already > U+00FF the string is already proper Unicode.
+const decodeFilename = (name: string) => {
+  if (/[^ -ÿ]/.test(name)) return name;
+  try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
+};
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
