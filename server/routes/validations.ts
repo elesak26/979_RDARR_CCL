@@ -608,7 +608,7 @@ router.post(
          VALUES ($1, $2, $3, $4) RETURNING *`,
         [id, decodeFilename(req.file.originalname), req.file.filename, req.user?.display_name ?? null]
       );
-      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(cycleId, 10), details: { file_name: decodeFilename(req.file.originalname), question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
+      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(String(cycleId), 10), details: { file_name: decodeFilename(req.file.originalname), question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
       res.status(201).json(result.rows[0]);
     } catch (err) {
       next(err);
