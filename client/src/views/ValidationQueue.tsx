@@ -76,10 +76,12 @@ export default function ValidationQueue() {
   const effectiveFilter = statusFilter ?? (isSeniorValidator ? 'pending_approval' : null);
 
   // Step 1: status filter
+  // Closed validations are always visible (read-only) for both Validator and Senior Validator,
+  // mirroring how Responders can view their submitted assessments on closed cycles.
   const statusFiltered = effectiveFilter
-    ? items.filter(i => i.status === effectiveFilter)
+    ? items.filter(i => i.status === effectiveFilter || i.status === 'closed')
     : isValidator && !statusFilter
-      ? items.filter(i => i.status === 'in_review' || i.status === 'rejected')
+      ? items.filter(i => i.status === 'in_review' || i.status === 'rejected' || i.status === 'closed')
       : items;
 
   // Step 2: cycles that have items after status filter
