@@ -2241,9 +2241,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflowX: 'auto' }}>
+          <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflow: 'auto', maxHeight: '65vh' }}>
             <table className="table" style={{ fontSize: 12, minWidth: 1100 }}>
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>
                   <th style={{ whiteSpace: 'nowrap' }}>Timestamp</th>
                   <th>Event</th>
