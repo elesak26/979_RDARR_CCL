@@ -2240,8 +2240,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-            <table className="table" style={{ fontSize: 12 }}>
+          <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflowX: 'auto' }}>
+            <table className="table" style={{ fontSize: 12, minWidth: 1100 }}>
               <thead>
                 <tr>
                   <th style={{ whiteSpace: 'nowrap' }}>Timestamp</th>
