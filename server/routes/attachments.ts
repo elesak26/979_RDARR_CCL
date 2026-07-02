@@ -14,8 +14,18 @@ try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true
 // Only re-decode if every char is ≤ U+00FF (the latin1 fingerprint);
 // if any char is already > U+00FF the string is already proper Unicode.
 const decodeFilename = (name: string) => {
-  if (/[^ -ÿ]/.test(name)) return name;
-  try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
+  const codePoints = Array.from(name).map(c => c.codePointAt(0) ?? 0);
+  console.log('[decodeFilename] raw:', JSON.stringify(name), 'codePoints:', JSON.stringify(codePoints));
+  // If any codepoint > 0xFF the string is already proper Unicode - leave it alone
+  if (codePoints.some(cp => cp > 0xff)) {
+    console.log('[decodeFilename] already unicode, returning as-is');
+    return name;
+  }
+  try {
+    const decoded = Buffer.from(name, 'latin1').toString('utf8');
+    console.log('[decodeFilename] re-decoded latin1->utf8:', JSON.stringify(decoded));
+    return decoded;
+  } catch { return name; }
 };
 
 const storage = multer.diskStorage({
