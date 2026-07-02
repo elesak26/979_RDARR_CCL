@@ -9,10 +9,13 @@ import { notifyRole } from '../notify';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('Could not create UPLOAD_DIR ' + UPLOAD_DIR, e); }
 
+// Multer parses multipart filenames as latin1; browsers send UTF-8, so re-decode.
+const decodeFilename = (name: string) => Buffer.from(name, 'latin1').toString('utf8');
+
 const valAttachStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
-    const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safe = decodeFilename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
     cb(null, `${Date.now()}_${safe}`);
   },
 });
@@ -588,9 +591,9 @@ router.post(
       const result = await query(
         `INSERT INTO validation_attachments (validation_id, file_name, file_path, uploaded_by)
          VALUES ($1, $2, $3, $4) RETURNING *`,
-        [id, req.file.originalname, req.file.filename, req.user?.display_name ?? null]
+        [id, decodeFilename(req.file.originalname), req.file.filename, req.user?.display_name ?? null]
       );
-      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(cycleId, 10), details: { file_name: req.file.originalname, question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
+      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(cycleId, 10), details: { file_name: decodeFilename(req.file.originalname), question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
       res.status(201).json(result.rows[0]);
     } catch (err) {
       next(err);
