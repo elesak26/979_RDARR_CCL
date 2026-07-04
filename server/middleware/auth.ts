@@ -27,12 +27,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     // Dev mode: pick user from X-User-Id header, default to first admin
     const userId = req.headers['x-user-id'] as string | undefined;
 
+    // unit_codes is stored as a JSON array (nvarchar) in Azure SQL — parse it
+    // back to string[] so AuthUser (and downstream authz) sees a real array.
+    function normalizeUser(row: (Omit<AuthUser, 'unit_codes'> & { unit_codes: unknown }) | undefined): AuthUser | null {
+      if (!row) return null;
+      const uc = row.unit_codes;
+      const unit_codes: string[] = Array.isArray(uc) ? uc : typeof uc === 'string' ? JSON.parse(uc) : [];
+      return { ...row, unit_codes };
+    }
+
     async function resolveUser(id: string): Promise<AuthUser | null> {
-      const result = await query<AuthUser>(
+      const result = await query<Omit<AuthUser, 'unit_codes'> & { unit_codes: unknown }>(
         'SELECT id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE id = $1',
         [id]
       );
-      return result.rows[0] ?? null;
+      return normalizeUser(result.rows[0]);
     }
 
     async function recordLogin(user: AuthUser) {
@@ -73,12 +82,13 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     }
     // Fallback: first active admin user
     try {
-      const result = await query<AuthUser>(
-        "SELECT id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
+      const result = await query<Omit<AuthUser, 'unit_codes'> & { unit_codes: unknown }>(
+        "SELECT TOP 1 id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = 1"
       );
-      if (result.rows.length > 0) {
-        req.user = result.rows[0];
-        await recordLogin(result.rows[0]);
+      const adminUser = normalizeUser(result.rows[0]);
+      if (adminUser) {
+        req.user = adminUser;
+        await recordLogin(adminUser);
         return next();
       }
     } catch (err) {

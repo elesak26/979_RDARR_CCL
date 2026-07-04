@@ -35,10 +35,18 @@ router.get('/api/audit-log', async (req: Request, res: Response, next: NextFunct
       LEFT JOIN questionnaire_cycles qc ON qc.id = al.cycle_id
       ${where}
       ORDER BY al.created_at DESC
-      LIMIT $${params.length}`;
+      OFFSET 0 ROWS FETCH NEXT $${params.length} ROWS ONLY`;
 
     const result = await query(sql, params);
-    const rows = result.rows;
+    // jsonb columns (old_value/new_value/details) come back as JSON strings in
+    // Azure SQL — parse them so the API response matches the old pg object shape.
+    const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
+    const rows = result.rows.map((r): Record<string, unknown> => ({
+      ...r,
+      old_value: r.old_value != null ? parseJson(r.old_value) : r.old_value,
+      new_value: r.new_value != null ? parseJson(r.new_value) : r.new_value,
+      details: r.details != null ? parseJson(r.details) : r.details,
+    }));
 
     if (format === 'csv') {
       const escape = (v: unknown) => {
@@ -86,7 +94,8 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
       return;
     }
     const row = result.rows[0];
-    const details = row.details ?? {};
+    // details is a JSON string (nvarchar) in Azure SQL — parse back to object.
+    const details = (typeof row.details === 'string' ? JSON.parse(row.details) : row.details) ?? {};
     const fileName = details.file_name as string | undefined;
     if (!fileName) {
       res.status(404).json({ error: 'No file attached to this entry' });
@@ -99,18 +108,18 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
     if (row.action === 'validation_attachment_uploaded') {
       // entity_id is the validation_id — look up the most recent attachment with this name on this validation
       const r = await query<{ file_name: string; file_path: string }>(
-        `SELECT file_name, file_path FROM validation_attachments
+        `SELECT TOP 1 file_name, file_path FROM validation_attachments
          WHERE validation_id = $1 AND file_name = $2
-         ORDER BY uploaded_at DESC LIMIT 1`,
+         ORDER BY uploaded_at DESC`,
         [parseInt(row.entity_id, 10), fileName]
       );
       fileRow = r.rows[0];
     } else {
       // response attachment or other — entity_id is the response_id
       const r = await query<{ file_name: string; file_path: string }>(
-        `SELECT file_name, file_path FROM response_attachments
+        `SELECT TOP 1 file_name, file_path FROM response_attachments
          WHERE response_id = $1 AND file_name = $2
-         ORDER BY uploaded_at DESC LIMIT 1`,
+         ORDER BY uploaded_at DESC`,
         [parseInt(row.entity_id, 10), fileName]
       );
       fileRow = r.rows[0];

@@ -21,9 +21,12 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
-# Compiled app
+# Compiled app (includes dist/scripts/run-migrations.js)
 COPY --from=builder /app/dist ./dist
-# Migrations are plain .js (run by node-pg-migrate at startup) — must ship in the image
+# Azure SQL schema + seed scripts — applied by dist/scripts/run-migrations.js at
+# startup (cwd=/app -> /app/init-db). MUST ship in the image.
+COPY init-db ./init-db
+# Legacy node-pg-migrate files kept for reference only (no longer executed).
 COPY migrations ./migrations
 # Startup script: run migrations, then start the server
 COPY docker-entrypoint.sh ./docker-entrypoint.sh

@@ -88,12 +88,11 @@ app.use(errorHandler);
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 
 app.listen(PORT, () => {
-  // Mask the password in DATABASE_URL for the log
-  const dbUrl = process.env.DATABASE_URL ?? '';
-  const maskedDb = dbUrl.replace(/:([^@]+)@/, ':***@');
+  // Azure SQL: describe the connection target without exposing the password.
+  const database = `${process.env.DB_AUTH === 'msi' ? 'msi' : (process.env.DB_USER || 'sa')}@${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '1433'}/${process.env.DB_NAME || 'ccl'}`;
 
   logger.info(
-    { port: PORT, database: maskedDb },
+    { port: PORT, database },
     'NBG RDARR Compliance Checklist server started'
   );
 });

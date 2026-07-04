@@ -79,8 +79,8 @@ router.post(
       const file = req.file;
       const result = await query(
         `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
+         OUTPUT INSERTED.*
+         VALUES ($1, $2, $3, $4)`,
         [responseId, decodeFilename(file.originalname), file.filename, req.user?.display_name ?? null]
       );
       const saved = result.rows[0];
@@ -103,7 +103,7 @@ router.delete(
     try {
       const { attachId: attachmentId, id: responseId } = req.params;
       const result = await query<{ file_path: string }>(
-        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path`,
+        `DELETE FROM response_attachments OUTPUT DELETED.file_path WHERE id = $1`,
         [attachmentId]
       );
       if (result.rows.length === 0) {

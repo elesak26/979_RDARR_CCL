@@ -105,7 +105,7 @@ router.get(
                 r.return_comment, r.returned_at
          FROM responses r
          WHERE r.cycle_id = $1 AND r.question_id = $2 AND r.bu_code = $3
-         ORDER BY r.material_risk NULLS FIRST`,
+         ORDER BY r.material_risk`,
         [cycleId, validation.question_id, validation.bu_code]
       );
 
@@ -155,9 +155,9 @@ router.put(
            justification       = COALESCE($4, justification),
            additional_controls = COALESCE($5, additional_controls),
            validated_by        = $6,
-           updated_at          = now()
-         WHERE id = $1 AND cycle_id = $2
-         RETURNING *`,
+           updated_at          = SYSDATETIMEOFFSET()
+         OUTPUT INSERTED.*
+         WHERE id = $1 AND cycle_id = $2`,
         [
           id,
           cycleId,
@@ -205,12 +205,12 @@ router.put(
          SET
            status           = 'pending_approval',
            validated_by     = $3,
-           validated_at     = now(),
-           updated_at       = now(),
-           workflow_history = workflow_history || $4::jsonb
-         WHERE id = $1 AND cycle_id = $2 AND status IN ('pending', 'in_review', 'rejected')
-         RETURNING *`,
-        [id, cycleId, req.user?.id ?? null, JSON.stringify([historyEntry])]
+           validated_at     = SYSDATETIMEOFFSET(),
+           updated_at       = SYSDATETIMEOFFSET(),
+           workflow_history = JSON_MODIFY(workflow_history, 'append $', JSON_QUERY($4))
+         OUTPUT INSERTED.*
+         WHERE id = $1 AND cycle_id = $2 AND status IN ('pending', 'in_review', 'rejected')`,
+        [id, cycleId, req.user?.id ?? null, JSON.stringify(historyEntry)]
       );
 
       if (result.rows.length === 0) {
@@ -273,11 +273,11 @@ router.get(
            WHERE v.cycle_id = $1
            GROUP BY v.question_id, e.expected_count
            HAVING COUNT(*) = e.expected_count
-              AND COUNT(*) FILTER (WHERE v.status NOT IN ('pending_approval', 'closed')) = 0
+              AND COUNT(CASE WHEN v.status NOT IN ('pending_approval', 'closed') THEN 1 END) = 0
          ),
          bu_self_score AS (
            SELECT question_id, bu_code,
-                  ROUND(SUM(compliance_score * COALESCE(weight, 1.0)) / NULLIF(SUM(COALESCE(weight, 1.0)), 0), 2)::float AS self_score
+                  ROUND(SUM(compliance_score * COALESCE(weight, 1.0)) / NULLIF(SUM(COALESCE(weight, 1.0)), 0), 2) AS self_score
            FROM responses
            WHERE cycle_id = $1 AND status = 'submitted'
            GROUP BY question_id, bu_code
@@ -287,7 +287,7 @@ router.get(
                   ROUND(
                     SUM(v.validation_score * COALESCE(w.weight, 1.0))
                     / NULLIF(SUM(CASE WHEN v.validation_score IS NOT NULL THEN COALESCE(w.weight, 1.0) ELSE 0 END), 0)
-                  , 2)::float AS consolidated_score
+                  , 2) AS consolidated_score
            FROM validations v
            JOIN questions q ON q.id = v.question_id
            LEFT JOIN ccl_item_weights w ON w.item_number = q.item_number AND w.bu_code = v.bu_code
@@ -306,7 +306,7 @@ router.get(
            q.bcbs_principle_name,
            q.bcbs_principle_number,
            bs.self_score,
-           COALESCE(w.weight, 1.0)::float  AS weight,
+           COALESCE(w.weight, 1.0)  AS weight,
            ru.bu_name,
            c.consolidated_score
          FROM validations v
@@ -350,12 +350,12 @@ router.put(
          SET
            status              = 'closed',
            senior_validated_by = $3,
-           senior_validated_at = now(),
-           updated_at          = now(),
-           workflow_history    = workflow_history || $4::jsonb
-         WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'
-         RETURNING id, validation_score`,
-        [cycleId, questionId, req.user?.id ?? null, JSON.stringify([historyEntry])]
+           senior_validated_at = SYSDATETIMEOFFSET(),
+           updated_at          = SYSDATETIMEOFFSET(),
+           workflow_history    = JSON_MODIFY(workflow_history, 'append $', JSON_QUERY($4))
+         OUTPUT INSERTED.id, INSERTED.validation_score
+         WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'`,
+        [cycleId, questionId, req.user?.id ?? null, JSON.stringify(historyEntry)]
       );
       if (result.rows.length === 0) {
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
@@ -370,7 +370,7 @@ router.put(
       );
       if (parseInt(remaining.rows[0].cnt, 10) === 0) {
         await query(
-          `UPDATE questionnaire_cycles SET status = 'closed', closed_at = now(), updated_at = now() WHERE id = $1 AND status = 'distributed'`,
+          `UPDATE questionnaire_cycles SET status = 'closed', closed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET() WHERE id = $1 AND status = 'distributed'`,
           [cycleId]
         );
         logAudit({ action: 'cycle_closed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(cycleId), cycle_id: parseInt(String(cycleId), 10), details: { reason: 'all_validations_approved' } });
@@ -408,13 +408,13 @@ router.put(
          SET
            status                   = 'rejected',
            senior_validated_by      = $3,
-           senior_validated_at      = now(),
+           senior_validated_at      = SYSDATETIMEOFFSET(),
            senior_rejection_comment = $4,
-           updated_at               = now(),
-           workflow_history         = workflow_history || $5::jsonb
-         WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'
-         RETURNING id, item_number, bu_code, validation_score`,
-        [cycleId, questionId, req.user?.id ?? null, comment ?? null, JSON.stringify([historyEntry])]
+           updated_at               = SYSDATETIMEOFFSET(),
+           workflow_history         = JSON_MODIFY(workflow_history, 'append $', JSON_QUERY($5))
+         OUTPUT INSERTED.id, INSERTED.item_number, INSERTED.bu_code, INSERTED.validation_score
+         WHERE cycle_id = $1 AND question_id = $2 AND status = 'pending_approval'`,
+        [cycleId, questionId, req.user?.id ?? null, comment ?? null, JSON.stringify(historyEntry)]
       );
       if (result.rows.length === 0) {
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
@@ -468,12 +468,12 @@ router.put(
            validated_by           = validated_by,
            validated_at           = validated_at,
            senior_validated_by    = $3,
-           senior_validated_at    = now(),
-           updated_at             = now(),
-           workflow_history       = workflow_history || $4::jsonb
-         WHERE id = $1 AND cycle_id = $2 AND status = 'pending_approval'
-         RETURNING *`,
-        [id, cycleId, req.user?.id ?? null, JSON.stringify([historyEntry])]
+           senior_validated_at    = SYSDATETIMEOFFSET(),
+           updated_at             = SYSDATETIMEOFFSET(),
+           workflow_history       = JSON_MODIFY(workflow_history, 'append $', JSON_QUERY($4))
+         OUTPUT INSERTED.*
+         WHERE id = $1 AND cycle_id = $2 AND status = 'pending_approval'`,
+        [id, cycleId, req.user?.id ?? null, JSON.stringify(historyEntry)]
       );
 
       if (result.rows.length === 0) {
@@ -489,7 +489,7 @@ router.put(
       );
       if (parseInt(remaining.rows[0].cnt, 10) === 0) {
         await query(
-          `UPDATE questionnaire_cycles SET status = 'closed', closed_at = now(), updated_at = now() WHERE id = $1 AND status = 'distributed'`,
+          `UPDATE questionnaire_cycles SET status = 'closed', closed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET() WHERE id = $1 AND status = 'distributed'`,
           [cycleId]
         );
         logAudit({ action: 'cycle_closed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(cycleId), cycle_id: parseInt(String(cycleId), 10), details: { reason: 'all_validations_approved' } });
@@ -529,13 +529,13 @@ router.put(
          SET
            status                   = 'rejected',
            senior_validated_by      = $3,
-           senior_validated_at      = now(),
+           senior_validated_at      = SYSDATETIMEOFFSET(),
            senior_rejection_comment = $4,
-           updated_at               = now(),
-           workflow_history         = workflow_history || $5::jsonb
-         WHERE id = $1 AND cycle_id = $2 AND status = 'pending_approval'
-         RETURNING *`,
-        [id, cycleId, req.user?.id ?? null, comment ?? null, JSON.stringify([historyEntry])]
+           updated_at               = SYSDATETIMEOFFSET(),
+           workflow_history         = JSON_MODIFY(workflow_history, 'append $', JSON_QUERY($5))
+         OUTPUT INSERTED.*
+         WHERE id = $1 AND cycle_id = $2 AND status = 'pending_approval'`,
+        [id, cycleId, req.user?.id ?? null, comment ?? null, JSON.stringify(historyEntry)]
       );
 
       if (result.rows.length === 0) {
@@ -605,7 +605,7 @@ router.post(
       const meta = metaResult.rows[0];
       const result = await query(
         `INSERT INTO validation_attachments (validation_id, file_name, file_path, uploaded_by)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
+         OUTPUT INSERTED.* VALUES ($1, $2, $3, $4)`,
         [id, decodeFilename(req.file.originalname), req.file.filename, req.user?.display_name ?? null]
       );
       logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(String(cycleId), 10), details: { file_name: decodeFilename(req.file.originalname), question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
@@ -627,7 +627,7 @@ router.delete(
     try {
       const { attachId } = req.params;
       const result = await query<{ file_path: string }>(
-        `DELETE FROM validation_attachments WHERE id = $1 RETURNING file_path`,
+        `DELETE FROM validation_attachments OUTPUT DELETED.file_path WHERE id = $1`,
         [attachId]
       );
       if (result.rows.length === 0) {

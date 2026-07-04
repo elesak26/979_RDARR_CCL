@@ -64,13 +64,17 @@ async function seed() {
   for (const user of users) {
     try {
       await query(
-        `INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (id) DO UPDATE
-           SET display_name      = EXCLUDED.display_name,
-               role              = EXCLUDED.role,
-               unit_codes        = EXCLUDED.unit_codes,
-               primary_unit_code = EXCLUDED.primary_unit_code`,
+        `MERGE dbo.users AS tgt
+         USING (SELECT $1 AS id, $2 AS display_name, $3 AS role, $4 AS unit_codes, $5 AS primary_unit_code) AS src
+           ON tgt.id = src.id
+         WHEN MATCHED THEN UPDATE SET
+           display_name      = src.display_name,
+           role              = src.role,
+           unit_codes        = src.unit_codes,
+           primary_unit_code = src.primary_unit_code
+         WHEN NOT MATCHED THEN
+           INSERT (id, display_name, role, unit_codes, primary_unit_code)
+           VALUES (src.id, src.display_name, src.role, src.unit_codes, src.primary_unit_code);`,
         [user.id, user.display_name, user.role, user.unit_codes, user.primary_unit_code]
       );
       logger.info({ id: user.id, role: user.role }, `Upserted user: ${user.display_name}`);

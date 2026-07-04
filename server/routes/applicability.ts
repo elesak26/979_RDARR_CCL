@@ -52,11 +52,15 @@ router.post(
       }
 
       const result = await query(
-        `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (cycle_id, question_id, bu_code) DO UPDATE
-           SET bu_name = EXCLUDED.bu_name, assigned_by = EXCLUDED.assigned_by, assigned_at = now()
-         RETURNING *`,
+        `MERGE dbo.question_applicability AS tgt
+         USING (SELECT $1 AS cycle_id, $2 AS question_id, $3 AS bu_code, $4 AS bu_name, $5 AS assigned_by) AS src
+           ON tgt.cycle_id = src.cycle_id AND tgt.question_id = src.question_id AND tgt.bu_code = src.bu_code
+         WHEN MATCHED THEN
+           UPDATE SET bu_name = src.bu_name, assigned_by = src.assigned_by, assigned_at = SYSDATETIMEOFFSET()
+         WHEN NOT MATCHED THEN
+           INSERT (cycle_id, question_id, bu_code, bu_name, assigned_by)
+           VALUES (src.cycle_id, src.question_id, src.bu_code, src.bu_name, src.assigned_by)
+         OUTPUT INSERTED.*;`,
         [cycleId, question_id, bu_code, bu_name, req.user?.id ?? null]
       );
       logAudit({ action: 'applicability_assigned', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'applicability', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id, bu_code, bu_name } });
@@ -95,7 +99,7 @@ router.delete(
       }
 
       const result = await query(
-        `DELETE FROM question_applicability WHERE id = $1 AND cycle_id = $2 RETURNING id`,
+        `DELETE FROM question_applicability OUTPUT DELETED.id WHERE id = $1 AND cycle_id = $2`,
         [id, cycleId]
       );
       if (result.rows.length === 0) {

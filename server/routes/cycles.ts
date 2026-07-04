@@ -199,7 +199,7 @@ router.get('/api/cycles/:id', async (req: Request, res: Response, next: NextFunc
     }
 
     const countsResult = await query<{ total_submitted: string }>(
-      `SELECT COUNT(id) FILTER (WHERE status = 'submitted')::text AS total_submitted
+      `SELECT COUNT(CASE WHEN status = 'submitted' THEN id END) AS total_submitted
        FROM responses WHERE cycle_id = $1`,
       [id]
     );
@@ -235,8 +235,8 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
     }
     const result = await query(
       `INSERT INTO questionnaire_cycles (name, year, description, created_by)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
+       OUTPUT INSERTED.*
+       VALUES ($1, $2, $3, $4)`,
       [name, year, description?.trim() || null, req.user?.id ?? null]
     );
     logAudit({ action: 'cycle_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(result.rows[0].id), cycle_id: result.rows[0].id as number, details: { name: result.rows[0].name, year: result.rows[0].year } });
@@ -268,9 +268,9 @@ router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: N
     }
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'pending_approval', rejection_comment = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'draft'
-       RETURNING *`,
+       SET status = 'pending_approval', rejection_comment = NULL, updated_at = SYSDATETIMEOFFSET()
+       OUTPUT INSERTED.*
+       WHERE id = $1 AND status = 'draft'`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -301,9 +301,9 @@ router.put('/api/cycles/:id/approve', async (req: Request, res: Response, next: 
     const { id } = req.params;
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'published', published_at = now(), rejection_comment = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'pending_approval'
-       RETURNING *`,
+       SET status = 'published', published_at = SYSDATETIMEOFFSET(), rejection_comment = NULL, updated_at = SYSDATETIMEOFFSET()
+       OUTPUT INSERTED.*
+       WHERE id = $1 AND status = 'pending_approval'`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -335,9 +335,9 @@ router.put('/api/cycles/:id/reject', async (req: Request, res: Response, next: N
     const { rejection_comment } = req.body as { rejection_comment?: string };
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'draft', rejection_comment = $2, published_at = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'pending_approval'
-       RETURNING *`,
+       SET status = 'draft', rejection_comment = $2, published_at = NULL, updated_at = SYSDATETIMEOFFSET()
+       OUTPUT INSERTED.*
+       WHERE id = $1 AND status = 'pending_approval'`,
       [id, rejection_comment?.trim() || null]
     );
     if (result.rows.length === 0) {
@@ -431,18 +431,38 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
         return;
       }
 
+      // Dedupe within the batch (pg ON CONFLICT DO NOTHING kept the first of any
+      // duplicate key); NULLS-NOT-DISTINCT semantics via the sentinel below.
+      const seenQa = new Set<string>();
+      const uniqueRows = rows.filter(r => {
+        const k = `${r.question_id}|${r.bu_code}|${r.material_risk ?? ''}`;
+        if (seenQa.has(k)) return false;
+        seenQa.add(k);
+        return true;
+      });
       await query(
         `INSERT INTO question_applicability (cycle_id, question_id, bu_code, bu_name, assigned_by, material_risk, weight)
-         SELECT $1::int, unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), $5, unnest($6::text[]), unnest($7::numeric[])
-         ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING`,
+         SELECT $1, j.question_id, j.bu_code, j.bu_code, $2, j.material_risk, j.weight
+         FROM OPENJSON($3) WITH (
+           question_id   int           '$.question_id',
+           bu_code       nvarchar(200) '$.bu_code',
+           material_risk nvarchar(200) '$.material_risk',
+           weight        decimal(10,6) '$.weight'
+         ) AS j
+         WHERE NOT EXISTS (
+           SELECT 1 FROM question_applicability qa
+           WHERE qa.cycle_id = $1 AND qa.question_id = j.question_id AND qa.bu_code = j.bu_code
+             AND COALESCE(qa.material_risk, N'#NULL#') = COALESCE(j.material_risk, N'#NULL#')
+         )`,
         [
           id,
-          rows.map(r => r.question_id),
-          rows.map(r => r.bu_code),
-          rows.map(r => r.bu_code),
           req.user?.id ?? null,
-          rows.map(r => r.material_risk ?? null),
-          rows.map(r => r.weight ?? null),
+          JSON.stringify(uniqueRows.map(r => ({
+            question_id: r.question_id,
+            bu_code: r.bu_code,
+            material_risk: r.material_risk ?? null,
+            weight: r.weight ?? null,
+          }))),
         ]
       );
     }
@@ -450,20 +470,24 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
     // Transition cycle status
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'distributed', distributed_at = now(), updated_at = now()
-       WHERE id = $1
-       RETURNING *`,
+       SET status = 'distributed', distributed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET()
+       OUTPUT INSERTED.*
+       WHERE id = $1`,
       [id]
     );
 
     // Create draft response rows for every (question, BU, material_risk) applicability entry, carrying weight
     const insertResult = await query<{ cnt: string }>(
       `INSERT INTO responses (cycle_id, question_id, bu_code, material_risk, weight)
+       OUTPUT INSERTED.id
        SELECT qa.cycle_id, qa.question_id, qa.bu_code, qa.material_risk, qa.weight
        FROM question_applicability qa
        WHERE qa.cycle_id = $1
-       ON CONFLICT (cycle_id, question_id, bu_code, material_risk) DO NOTHING
-       RETURNING id`,
+         AND NOT EXISTS (
+           SELECT 1 FROM responses r
+           WHERE r.cycle_id = qa.cycle_id AND r.question_id = qa.question_id AND r.bu_code = qa.bu_code
+             AND COALESCE(r.material_risk, N'#NULL#') = COALESCE(qa.material_risk, N'#NULL#')
+         )`,
       [id]
     );
 
@@ -528,9 +552,9 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
 
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'closed', closed_at = now(), updated_at = now()
-       WHERE id = $1
-       RETURNING *`,
+       SET status = 'closed', closed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET()
+       OUTPUT INSERTED.*
+       WHERE id = $1`,
       [id]
     );
     logAudit({ action: 'cycle_closed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
@@ -550,8 +574,8 @@ router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextF
     const { id } = req.params;
     const result = await query(
       `DELETE FROM questionnaire_cycles
-       WHERE id = $1 AND status IN ('draft', 'published')
-       RETURNING id, name`,
+       OUTPUT DELETED.id, DELETED.name
+       WHERE id = $1 AND status IN ('draft', 'published')`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -604,7 +628,7 @@ router.post(
       }
 
       const result = await query(
-        `UPDATE questionnaire_cycles SET checklist_file = $1, checklist_original_name = $2, updated_at = now() WHERE id = $3 RETURNING *`,
+        `UPDATE questionnaire_cycles SET checklist_file = $1, checklist_original_name = $2, updated_at = SYSDATETIMEOFFSET() OUTPUT INSERTED.* WHERE id = $3`,
         [req.file.filename, req.file.originalname, id]
       );
       if (result.rows.length === 0) {
@@ -701,8 +725,8 @@ router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next
       id: number; user_id: string; user_name: string; user_role: string; body: string; created_at: string;
     }>(
       `INSERT INTO cycle_comments (cycle_id, user_id, user_name, user_role, body)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, user_id, user_name, user_role, body, created_at`,
+       OUTPUT INSERTED.id, INSERTED.user_id, INSERTED.user_name, INSERTED.user_role, INSERTED.body, INSERTED.created_at
+       VALUES ($1, $2, $3, $4, $5)`,
       [id, req.user?.id, req.user?.display_name, role, body.trim()]
     );
     res.status(201).json(result.rows[0]);

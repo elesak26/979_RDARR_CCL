@@ -4,17 +4,25 @@ import { logAudit } from '../audit';
 
 const router = Router();
 
+// unit_codes is stored as a JSON array (nvarchar) in Azure SQL — parse it back
+// to string[] so the API response shape matches the old pg text[] behaviour.
+function parseUnitCodes<T extends { unit_codes?: unknown }>(row: T): T {
+  const uc = row?.unit_codes;
+  if (typeof uc === 'string') return { ...row, unit_codes: JSON.parse(uc) };
+  return row;
+}
+
 // GET /api/users — list all users (with last login)
 router.get('/api/users', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const result = await query(
+    const result = await query<{ unit_codes?: unknown }>(
       `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
               u.is_active, u.created_at,
-              (SELECT lh.logged_in_at FROM login_history lh
-               WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC LIMIT 1) AS last_login_at
+              (SELECT TOP 1 lh.logged_in_at FROM login_history lh
+               WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC) AS last_login_at
        FROM users u ORDER BY u.display_name`
     );
-    res.json(result.rows);
+    res.json(result.rows.map(parseUnitCodes));
   } catch (err) {
     next(err);
   }
@@ -47,12 +55,12 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
 
     const result = await query(
       `INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_at`,
+       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.unit_codes, INSERTED.primary_unit_code, INSERTED.is_active, INSERTED.created_at
+       VALUES ($1, $2, $3, $4, $5)`,
       [id, display_name, role, unit_codes, primary_unit_code]
     );
     logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role } });
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(parseUnitCodes(result.rows[0]));
   } catch (err) {
     next(err);
   }
@@ -80,8 +88,8 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
          role             = COALESCE($3, role),
          unit_codes       = COALESCE($4, unit_codes),
          primary_unit_code = COALESCE($5, primary_unit_code)
-       WHERE id = $1
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_at`,
+       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.unit_codes, INSERTED.primary_unit_code, INSERTED.is_active, INSERTED.created_at
+       WHERE id = $1`,
       [id, display_name ?? null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
     );
 
@@ -90,7 +98,7 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
       return;
     }
     logAudit({ action: 'user_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(id), details: { display_name, role } });
-    res.json(result.rows[0]);
+    res.json(parseUnitCodes(result.rows[0]));
   } catch (err) {
     next(err);
   }
@@ -109,8 +117,9 @@ router.put('/api/users/:id/toggle-active', async (req: Request, res: Response, n
       return;
     }
     const result = await query(
-      `UPDATE users SET is_active = NOT is_active WHERE id = $1
-       RETURNING id, display_name, role, is_active`,
+      `UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
+       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.is_active
+       WHERE id = $1`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -145,7 +154,7 @@ router.get('/api/users/login-history', async (req: Request, res: Response, next:
        FROM login_history lh
        ${where}
        ORDER BY lh.logged_in_at DESC
-       LIMIT $${params.length}`,
+       OFFSET 0 ROWS FETCH NEXT $${params.length} ROWS ONLY`,
       params
     );
     res.json(result.rows);
@@ -162,7 +171,7 @@ router.delete('/api/users/:id', async (req: Request, res: Response, next: NextFu
   }
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    const result = await query('DELETE FROM users OUTPUT DELETED.id WHERE id = $1', [id]);
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
       return;

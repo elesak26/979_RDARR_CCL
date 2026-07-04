@@ -29,11 +29,11 @@ router.get(
         // Use the user's full unit_codes array so a Responder with multiple sub-codes (e.g. 961-IRRBB,
         // 961-Liquidity, 961-Market) sees all their responses with a single bu_code= query param.
         const codes = req.user?.unit_codes?.length ? req.user.unit_codes : [bu_code];
-        sql += ` AND r.bu_code = ANY($2::text[])`;
+        sql += ` AND r.bu_code IN (SELECT value FROM OPENJSON($2))`;
         params.push(codes);
       }
 
-      sql += ' ORDER BY q.item_number, r.bu_code, r.material_risk NULLS FIRST';
+      sql += ' ORDER BY q.item_number, r.bu_code, r.material_risk';
 
       const result = await query(sql, params);
       res.json(result.rows);
@@ -98,9 +98,9 @@ router.put(
            responder_id     = $5,
            responder_name   = $6,
            status           = CASE WHEN status = 'draft' THEN 'in_progress' ELSE status END,
-           updated_at       = now()
-         WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')
-         RETURNING *`,
+           updated_at       = SYSDATETIMEOFFSET()
+         OUTPUT INSERTED.*
+         WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')`,
         [id, cycleId, compliance_score ?? null, comments ?? null, req.user.id, req.user.display_name]
       );
 
@@ -130,11 +130,11 @@ router.put(
       // Submit the response
       const result = await query<{ id: number; question_id: number; bu_code: string; status: string; compliance_score: number | null }>(
         `UPDATE responses
-         SET status = 'submitted', submitted_at = now(), updated_at = now(),
+         SET status = 'submitted', submitted_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET(),
              responder_id = COALESCE(responder_id, $3),
              responder_name = COALESCE(responder_name, $4)
-         WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')
-         RETURNING id, question_id, bu_code, status, compliance_score`,
+         OUTPUT INSERTED.id, INSERTED.question_id, INSERTED.bu_code, INSERTED.status, INSERTED.compliance_score
+         WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')`,
         [id, cycleId, req.user.id, req.user.display_name]
       );
 
@@ -150,8 +150,8 @@ router.put(
       // without waiting for other BUs to finish.
       const buProgress = await query<{ total: string; submitted: string }>(
         `SELECT
-           COUNT(*)                                         AS total,
-           COUNT(*) FILTER (WHERE status = 'submitted')    AS submitted
+           COUNT(*)                                            AS total,
+           COUNT(CASE WHEN status = 'submitted' THEN 1 END)    AS submitted
          FROM responses
          WHERE cycle_id = $1 AND bu_code = $2`,
         [cycleId, bu_code]
@@ -168,11 +168,15 @@ router.put(
         );
         for (const { question_id: qid } of buQuestions.rows) {
           await query(
-            `INSERT INTO validations (cycle_id, question_id, bu_code, status)
-             VALUES ($1, $2, $3, 'in_review')
-             ON CONFLICT (cycle_id, question_id, bu_code)
-             DO UPDATE SET status = 'in_review', updated_at = now()
-             WHERE validations.status NOT IN ('closed', 'pending_approval')`,
+            `MERGE dbo.validations AS tgt
+             USING (SELECT $1 AS cycle_id, $2 AS question_id, $3 AS bu_code) AS src
+               ON tgt.cycle_id = src.cycle_id AND tgt.question_id = src.question_id
+                  AND COALESCE(tgt.bu_code, N'#NULL#') = COALESCE(src.bu_code, N'#NULL#')
+             WHEN MATCHED AND tgt.status NOT IN ('closed', 'pending_approval') THEN
+               UPDATE SET status = 'in_review', updated_at = SYSDATETIMEOFFSET()
+             WHEN NOT MATCHED THEN
+               INSERT (cycle_id, question_id, bu_code, status)
+               VALUES (src.cycle_id, src.question_id, src.bu_code, 'in_review');`,
             [cycleId, qid, bu_code]
           );
         }
@@ -180,11 +184,15 @@ router.put(
         // BU hasn't finished yet — still create/update the in_review row for this
         // specific (question, BU) pair so partial progress is visible.
         await query(
-          `INSERT INTO validations (cycle_id, question_id, bu_code, status)
-           VALUES ($1, $2, $3, 'in_review')
-           ON CONFLICT (cycle_id, question_id, bu_code)
-           DO UPDATE SET status = 'in_review', updated_at = now()
-           WHERE validations.status NOT IN ('closed', 'pending_approval')`,
+          `MERGE dbo.validations AS tgt
+           USING (SELECT $1 AS cycle_id, $2 AS question_id, $3 AS bu_code) AS src
+             ON tgt.cycle_id = src.cycle_id AND tgt.question_id = src.question_id
+                AND COALESCE(tgt.bu_code, N'#NULL#') = COALESCE(src.bu_code, N'#NULL#')
+           WHEN MATCHED AND tgt.status NOT IN ('closed', 'pending_approval') THEN
+             UPDATE SET status = 'in_review', updated_at = SYSDATETIMEOFFSET()
+           WHEN NOT MATCHED THEN
+             INSERT (cycle_id, question_id, bu_code, status)
+             VALUES (src.cycle_id, src.question_id, src.bu_code, 'in_review');`,
           [cycleId, question_id, bu_code]
         );
       }
@@ -222,9 +230,9 @@ router.put(
 
       const result = await query<{ id: number; question_id: number; bu_code: string; status: string }>(
         `UPDATE responses
-         SET status = 'returned', return_comment = $3, returned_at = now(), updated_at = now()
-         WHERE id = $1 AND cycle_id = $2 AND status = 'submitted'
-         RETURNING id, question_id, bu_code, status`,
+         SET status = 'returned', return_comment = $3, returned_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET()
+         OUTPUT INSERTED.id, INSERTED.question_id, INSERTED.bu_code, INSERTED.status
+         WHERE id = $1 AND cycle_id = $2 AND status = 'submitted'`,
         [id, cycleId, return_comment ?? null]
       );
 
@@ -238,7 +246,7 @@ router.put(
       // Flip this BU's validation to 'returned' so the Validator sees it is awaiting the Responder.
       await query(
         `UPDATE validations
-         SET status = 'returned', updated_at = now()
+         SET status = 'returned', updated_at = SYSDATETIMEOFFSET()
          WHERE cycle_id = $1 AND question_id = $2 AND bu_code = $3 AND status = 'in_review'`,
         [cycleId, question_id, bu_code]
       );

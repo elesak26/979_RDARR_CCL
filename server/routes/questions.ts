@@ -14,7 +14,7 @@ router.get('/api/questions', async (req: Request, res: Response, next: NextFunct
     const params: unknown[] = [];
 
     if (thematic_area) {
-      sql += ' WHERE thematic_area ILIKE $1';
+      sql += ' WHERE thematic_area LIKE $1';
       params.push(`%${thematic_area}%`);
     }
 
