@@ -377,7 +377,7 @@ export default function ValidationDetail() {
           <div style={{ marginBottom: 0 }}>
             <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Expectation</div>
             <div style={{
-              fontSize: 13, lineHeight: 1.6,
+              fontSize: 14, lineHeight: 1.6,
               padding: '10px 12px', borderRadius: 6,
               background: 'var(--accent)0a', border: '1px solid var(--accent)30',
             }}>
