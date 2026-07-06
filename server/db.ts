@@ -16,22 +16,62 @@ import { logger } from './logger';
  * Only genuinely dialect-specific statements (arrays, JSONB, upserts, RETURNING,
  * FILTER) are hand-ported per the T-SQL cheatsheet — NOT here.
  *
- * Config: discrete DB_* env vars (LFT format) + DB_AUTH=sql|msi toggle.
+ * Config: DB_CONNECTION_STRING (Azure SQL / Key Vault ADO.NET format) when set,
+ * else discrete DB_* env vars (LFT format) + DB_AUTH=sql|msi toggle.
  * UTC: tedious `useUTC:true` reproduces the retired pg TIMESTAMP UTC behaviour.
  */
 
-/** Build the mssql pool config from discrete DB_* env vars. Read lazily (at
- *  first connect) so a caller that loads `.env` after importing this module —
- *  seed scripts, the migration runner — still sees the values. */
+/** Parse an ADO.NET / Key-Vault SQL connection string into the discrete
+ *  fields buildPoolConfig consumes. Mirrors the LoanFileTransfer / nbg-bia
+ *  parser for cross-app consistency. Only DB_CONNECTION_STRING drives this;
+ *  when it is unset the discrete DB_* env vars are used unchanged. */
+function parseSqlConnectionString(cs: string): Partial<{
+  host: string; port: number; name: string; user: string; password: string; encrypt: boolean; trustServerCertificate: boolean;
+}> {
+  const out: { host?: string; port?: number; name?: string; user?: string; password?: string; encrypt?: boolean; trustServerCertificate?: boolean } = {};
+  const truthy = (v: string): boolean => /^(true|yes|1)$/i.test(v.trim());
+  for (const part of cs.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim().toLowerCase();
+    const val = part.slice(idx + 1).trim();
+    if (!key) continue;
+    switch (key) {
+      case 'server':
+      case 'data source': { const [h, p] = val.replace(/^tcp:/i, '').split(','); if (h) out.host = h.trim(); if (p) out.port = parseInt(p.trim(), 10); break; }
+      case 'initial catalog':
+      case 'database': out.name = val; break;
+      case 'user id':
+      case 'user':
+      case 'uid': out.user = val; break;
+      case 'password':
+      case 'pwd': out.password = val; break;
+      case 'encrypt': out.encrypt = truthy(val); break;
+      case 'trustservercertificate': out.trustServerCertificate = truthy(val); break;
+      default: break;
+    }
+  }
+  return out;
+}
+
+/** Build the mssql pool config. Prefers DB_CONNECTION_STRING (Azure SQL / Key
+ *  Vault ADO.NET format) when set, else the discrete DB_* env vars (LFT format)
+ *  + DB_AUTH=sql|msi toggle. Read lazily (at first connect) so a caller that
+ *  loads `.env` after importing this module — seed scripts, the migration
+ *  runner — still sees the values. */
 function buildPoolConfig(): sql.config {
   const useMsi = process.env.DB_AUTH === 'msi';
-  if (process.env.NODE_ENV === 'production' && !useMsi && !process.env.DB_PASSWORD) {
-    throw new Error('DB_PASSWORD environment variable is required in production (DB_AUTH=sql)');
+  const parsed = process.env.DB_CONNECTION_STRING?.trim()
+    ? parseSqlConnectionString(process.env.DB_CONNECTION_STRING.trim())
+    : {};
+  const password = parsed.password ?? (process.env.DB_PASSWORD || '');
+  if (process.env.NODE_ENV === 'production' && !useMsi && !password) {
+    throw new Error('A DB password is required in production (DB_AUTH=sql): set DB_CONNECTION_STRING or DB_PASSWORD');
   }
   return {
-    server: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '1433', 10),
-    database: process.env.DB_NAME || 'ccl',
+    server: parsed.host || process.env.DB_HOST || 'localhost',
+    port: parsed.port || parseInt(process.env.DB_PORT || '1433', 10),
+    database: parsed.name || process.env.DB_NAME || 'ccl',
     ...(useMsi
       ? {
           authentication: {
@@ -39,11 +79,11 @@ function buildPoolConfig(): sql.config {
             options: process.env.DB_MSI_CLIENT_ID ? { clientId: process.env.DB_MSI_CLIENT_ID } : {},
           },
         }
-      : { user: process.env.DB_USER || 'sa', password: process.env.DB_PASSWORD || '' }),
+      : { user: parsed.user || process.env.DB_USER || 'sa', password }),
     options: {
-      // Azure SQL mandates TLS; trustServerCertificate only for the local container.
-      encrypt: process.env.DB_ENCRYPT === 'false' ? false : true,
-      trustServerCertificate: process.env.DB_TRUST_SERVER_CERT === 'true',
+      // Azure SQL mandates TLS; a connection string's Encrypt= wins when present.
+      encrypt: parsed.encrypt ?? (process.env.DB_ENCRYPT === 'false' ? false : true),
+      trustServerCertificate: parsed.trustServerCertificate ?? (process.env.DB_TRUST_SERVER_CERT === 'true'),
       // Store/read datetime2/datetimeoffset as UTC in both directions.
       useUTC: true,
       requestTimeout: 30_000,
