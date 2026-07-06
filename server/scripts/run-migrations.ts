@@ -61,15 +61,51 @@ function loadDotEnv(filePath: string): void {
   }
 }
 
+/** Parse an ADO.NET / Key-Vault SQL connection string into discrete fields.
+ *  Mirrors server/db.ts so the startup migration runner can read its Azure SQL
+ *  connection from DB_CONNECTION_STRING (a Key Vault reference) — not just the
+ *  discrete DB_* env vars. Only DB_CONNECTION_STRING drives this. */
+function parseSqlConnectionString(cs: string): Partial<{
+  host: string; port: number; name: string; user: string; password: string; encrypt: boolean; trustServerCertificate: boolean;
+}> {
+  const out: { host?: string; port?: number; name?: string; user?: string; password?: string; encrypt?: boolean; trustServerCertificate?: boolean } = {};
+  const truthy = (v: string): boolean => /^(true|yes|1)$/i.test(v.trim());
+  for (const part of cs.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim().toLowerCase();
+    const val = part.slice(idx + 1).trim();
+    if (!key) continue;
+    switch (key) {
+      case 'server':
+      case 'data source': { const [h, p] = val.replace(/^tcp:/i, '').split(','); if (h) out.host = h.trim(); if (p) out.port = parseInt(p.trim(), 10); break; }
+      case 'initial catalog':
+      case 'database': out.name = val; break;
+      case 'user id':
+      case 'user':
+      case 'uid': out.user = val; break;
+      case 'password':
+      case 'pwd': out.password = val; break;
+      case 'encrypt': out.encrypt = truthy(val); break;
+      case 'trustservercertificate': out.trustServerCertificate = truthy(val); break;
+      default: break;
+    }
+  }
+  return out;
+}
+
 function buildPoolConfig(): sql.config {
   const useMsi = process.env.DB_AUTH === 'msi';
+  const parsed = process.env.DB_CONNECTION_STRING?.trim()
+    ? parseSqlConnectionString(process.env.DB_CONNECTION_STRING.trim())
+    : {};
   const base: sql.config = {
-    server: process.env.DB_HOST ?? 'localhost',
-    port: parseInt(process.env.DB_PORT ?? '1433', 10),
-    database: process.env.DB_NAME ?? 'ccl',
+    server: parsed.host ?? process.env.DB_HOST ?? 'localhost',
+    port: parsed.port ?? parseInt(process.env.DB_PORT ?? '1433', 10),
+    database: parsed.name ?? process.env.DB_NAME ?? 'ccl',
     options: {
-      encrypt: process.env.DB_ENCRYPT === 'false' ? false : true,
-      trustServerCertificate: process.env.DB_TRUST_SERVER_CERT === 'true',
+      encrypt: parsed.encrypt ?? (process.env.DB_ENCRYPT === 'false' ? false : true),
+      trustServerCertificate: parsed.trustServerCertificate ?? (process.env.DB_TRUST_SERVER_CERT === 'true'),
     },
     pool: { max: 4, min: 0, idleTimeoutMillis: 30000 },
   };
@@ -79,8 +115,8 @@ function buildPoolConfig(): sql.config {
       options: process.env.DB_MSI_CLIENT_ID ? { clientId: process.env.DB_MSI_CLIENT_ID } : {},
     } as sql.config['authentication'];
   } else {
-    base.user = process.env.DB_USER ?? 'sa';
-    base.password = process.env.DB_PASSWORD ?? '';
+    base.user = parsed.user ?? process.env.DB_USER ?? 'sa';
+    base.password = parsed.password ?? process.env.DB_PASSWORD ?? '';
   }
   return base;
 }
