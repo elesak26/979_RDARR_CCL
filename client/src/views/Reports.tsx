@@ -534,6 +534,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [auditDateTo, setAuditDateTo] = useState<string>('');
   const [exporting, setExporting] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  const auditTableRef = useRef<HTMLDivElement>(null);
+  const [auditTableTop, setAuditTableTop] = useState<number | null>(null);
 
   const loadCycles = useCallback(async () => {
     setLoadingCycles(true);
@@ -639,6 +641,19 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   useEffect(() => {
     if (currentUser?.role === 'Admin') loadAuditLog();
   }, [currentUser, loadAuditLog]);
+
+  useEffect(() => {
+    if (adminTab !== 'audit') return;
+    const measure = () => {
+      if (auditTableRef.current) {
+        setAuditTableTop(auditTableRef.current.getBoundingClientRect().top);
+      }
+    };
+    // Measure after the tab renders
+    const id = requestAnimationFrame(measure);
+    window.addEventListener('resize', measure);
+    return () => { cancelAnimationFrame(id); window.removeEventListener('resize', measure); };
+  }, [adminTab]);
 
   const handleAuditExportCsv = () => {
     const params = buildAuditParams();
@@ -2241,7 +2256,15 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflow: 'auto', maxHeight: '65vh' }}>
+          <div
+            ref={auditTableRef}
+            style={{
+              background: 'var(--panel)', border: '1px solid var(--line)',
+              borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+              overflow: 'auto',
+              height: auditTableTop != null ? `calc(100vh - ${auditTableTop}px - 24px)` : '65vh',
+            }}
+          >
             <table className="table" style={{ fontSize: 12, minWidth: 1100 }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr>

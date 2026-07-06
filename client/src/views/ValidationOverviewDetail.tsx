@@ -94,7 +94,6 @@ export default function ValidationOverviewDetail() {
 
   const consolidatedScore = item.consolidated_score;
   const isFullyApproved = rows.length > 0 && rows.every(r => r.status === 'closed');
-  const isClosed = cycle?.status === 'closed';
 
   const totalWeight = rows.reduce((s, r) => s + r.weight, 0);
   const consolidatedSelfScore = rows.some(r => r.self_score !== null) && totalWeight > 0
@@ -139,9 +138,8 @@ export default function ValidationOverviewDetail() {
 
       {/* Per-BU table */}
       <div className="panel" style={{ marginBottom: 16 }}>
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)' }}>
           <span style={{ fontWeight: 600, fontSize: 13 }}>Respondent Assessment & Validation Scores</span>
-          {!isClosed && <span style={{ fontSize: 11, color: 'var(--muted)' }}>Double-click a row to view full validation details</span>}
         </div>
         <table className="table">
           <thead>
@@ -151,16 +149,12 @@ export default function ValidationOverviewDetail() {
               <th style={{ width: 170, textAlign: 'center' }}>Validation Score</th>
               <th style={{ width: 80, textAlign: 'center' }}>Weight</th>
               <th style={{ width: 130, textAlign: 'center' }}>Status</th>
+              <th style={{ width: 130, textAlign: 'center' }}>Details</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(row => (
-              <tr
-                key={row.bu_code}
-                onDoubleClick={() => !isClosed && navigate(`/validation/${row.validation_id}`)}
-                title={!isClosed ? 'Double-click to view validation details' : undefined}
-                style={{ cursor: isClosed ? 'default' : 'pointer' }}
-              >
+              <tr key={row.bu_code}>
                 <td>
                   <span style={{
                     fontSize: 12, fontWeight: 700,
@@ -202,6 +196,15 @@ export default function ValidationOverviewDetail() {
                       borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700, color: '#f08c00',
                     }}>Pending</span>
                   )}
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    onClick={() => navigate(`/validation/${row.validation_id}`, { state: { cycleId: Number(cycleId) } })}
+                  >
+                    Further Details
+                  </button>
                 </td>
               </tr>
             ))}

@@ -35,6 +35,7 @@ export default function ValidationDetail() {
   const [valAttachments, setValAttachments] = useState<Attachment[]>([]);
   const [uploadingValAttach, setUploadingValAttach] = useState(false);
   const valFileRef = useRef<HTMLInputElement | null>(null);
+  const [detailResponse, setDetailResponse] = useState<Response | null>(null);
   const buName = useBuNames();
 
   // cycleId can come from navigation state (from ValidationQueue) or we find it
@@ -493,6 +494,17 @@ export default function ValidationDetail() {
                   Return to Respondent
                 </button>
               )}
+
+              {/* More Details — Senior Validator only */}
+              {isSeniorValidator && (
+                <button
+                  className="btn"
+                  style={{ marginTop: 10, fontSize: 12, padding: '4px 10px', width: '100%' }}
+                  onClick={() => setDetailResponse(r)}
+                >
+                  More Details
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -782,6 +794,162 @@ export default function ValidationDetail() {
           </div>
         )}
       </div>
+
+      {/* More Details modal — Senior Validator */}
+      {detailResponse !== null && (() => {
+        const r = detailResponse;
+        const rAttachments = attachments[r.id] ?? [];
+        return (
+          <div className="modal-backdrop" onClick={() => setDetailResponse(null)}>
+            <div
+              className="modal"
+              style={{ padding: 0, minWidth: 520, maxWidth: 680, width: '90vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Modal header */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '16px 20px', borderBottom: '1px solid var(--line)',
+                flexShrink: 0,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <strong style={{ fontSize: 15 }}>{buName(r.bu_code)}</strong>
+                  {r.material_risk && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                      background: 'rgba(0,123,133,0.12)', color: 'var(--accent)',
+                      border: '1px solid var(--accent)',
+                    }}>
+                      {r.material_risk}
+                    </span>
+                  )}
+                  <WorkflowBadge status={r.status} size="sm" />
+                </div>
+                <button
+                  onClick={() => setDetailResponse(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--muted)', lineHeight: 1, padding: '0 4px' }}
+                  title="Close"
+                >×</button>
+              </div>
+
+              {/* Modal body — scrollable */}
+              <div style={{ overflowY: 'auto', padding: '20px', flex: 1 }}>
+
+                {/* Score */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20 }}>
+                  {r.compliance_score !== null ? (
+                    <>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 48, height: 48, borderRadius: '50%',
+                        fontWeight: 700, fontSize: 24,
+                        background: scoreColor(r.compliance_score), color: '#fff',
+                        flexShrink: 0,
+                      }}>
+                        {r.compliance_score}
+                      </span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: scoreColor(r.compliance_score) }}>
+                          {SCORE_LABELS[r.compliance_score]}
+                        </div>
+                        <div className="small" style={{ color: 'var(--muted)' }}>Self-assessment score</div>
+                      </div>
+                    </>
+                  ) : (
+                    <span className="small" style={{ color: 'var(--muted)' }}>No score provided</span>
+                  )}
+                </div>
+
+                {/* Return comment */}
+                {r.return_comment && (
+                  <div style={{
+                    marginBottom: 16, padding: '10px 12px',
+                    background: 'rgba(220,53,69,0.07)', border: '1px solid #dc3545',
+                    borderRadius: 6, fontSize: 13, color: '#dc3545',
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Return note</div>
+                    {r.return_comment}
+                  </div>
+                )}
+
+                {/* Comments */}
+                <div style={{ marginBottom: 16 }}>
+                  <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>Assessment Comments</div>
+                  {r.comments ? (
+                    <div style={{
+                      padding: '10px 12px', background: 'var(--panel2)',
+                      border: '1px solid var(--line)', borderRadius: 6,
+                      fontSize: 13, lineHeight: 1.7, color: 'var(--text)',
+                      whiteSpace: 'pre-wrap',
+                    }}>
+                      {r.comments}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No comments provided.</div>
+                  )}
+                </div>
+
+                {/* Attachments */}
+                <div style={{ marginBottom: 16 }}>
+                  <div className="small" style={{ fontWeight: 600, marginBottom: 6 }}>
+                    Evidence Files {rAttachments.length > 0 ? `(${rAttachments.length})` : ''}
+                  </div>
+                  {rAttachments.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--muted)', fontStyle: 'italic' }}>No files attached.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {rAttachments.map(a => (
+                        <div key={a.id} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: 8,
+                          padding: '8px 10px', borderRadius: 6,
+                          background: 'var(--panel2)', border: '1px solid var(--line)',
+                        }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}>
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                          </svg>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <a
+                              href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
+                              target="_blank" rel="noreferrer"
+                              style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            >
+                              {displayFileName(a.file_name)}
+                            </a>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                              {[a.uploaded_by, a.uploaded_at ? new Date(a.uploaded_at).toLocaleString() : null].filter(Boolean).join(' · ')}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Timestamps */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+                  {r.submitted_at && (
+                    <div>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 2 }}>Submitted</div>
+                      <div style={{ fontSize: 13 }}>{new Date(r.submitted_at).toLocaleString()}</div>
+                    </div>
+                  )}
+                  {r.returned_at && (
+                    <div>
+                      <div className="small" style={{ fontWeight: 600, marginBottom: 2 }}>Returned at</div>
+                      <div style={{ fontSize: 13 }}>{new Date(r.returned_at).toLocaleString()}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal footer */}
+              <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line)', flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="btn" onClick={() => setDetailResponse(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Return to Respondent modal */}
       {returningResponseId !== null && (
