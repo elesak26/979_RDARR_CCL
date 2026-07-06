@@ -109,6 +109,11 @@ export interface Validation {
   item_number?: number;
   thematic_area?: string;
   requirement?: string;
+  expectations?: string | null;
+  score_1_desc?: string | null;
+  score_2_desc?: string | null;
+  score_3_desc?: string | null;
+  score_4_desc?: string | null;
   // side-by-side responses (from GET /validations/:id)
   bu_responses?: Response[];
   responses?: Response[];

@@ -251,6 +251,15 @@ export default function ValidationDetail() {
     }
   }
 
+  function scoreDesc(v: typeof validation, score: number | null): string | null {
+    if (!v || score === null) return null;
+    if (score === 1) return v.score_1_desc ?? null;
+    if (score === 2) return v.score_2_desc ?? null;
+    if (score === 3) return v.score_3_desc ?? null;
+    if (score === 4) return v.score_4_desc ?? null;
+    return null;
+  }
+
   if (loading) return <div className="small" style={{ padding: 24 }}>Loading validation…</div>;
   if (error) return (
     <div style={{ color: 'var(--danger)', padding: 16 }}>
@@ -364,6 +373,18 @@ export default function ValidationDetail() {
           <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Requirement</div>
           <div style={{ fontSize: 14, lineHeight: 1.6 }}>{validation.requirement ?? '—'}</div>
         </div>
+        {isSeniorValidator && validation.expectations && (
+          <div style={{ marginBottom: 0 }}>
+            <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Expectation</div>
+            <div style={{
+              fontSize: 13, lineHeight: 1.6,
+              padding: '10px 12px', borderRadius: 6,
+              background: 'var(--accent)0a', border: '1px solid var(--accent)30',
+            }}>
+              {validation.expectations}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* BU Responses */}
@@ -380,20 +401,30 @@ export default function ValidationDetail() {
               style={{ padding: 16 }}
             >
               {/* Card header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: r.material_risk ? 6 : 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: r.material_risk ? 6 : 10, gap: 10 }}>
                 <strong style={{ fontSize: 13 }}>{buName(r.bu_code)}</strong>
                 {r.compliance_score !== null ? (
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 32, height: 32, borderRadius: '50%',
-                    fontWeight: 700, fontSize: 16,
-                    background: scoreColor(r.compliance_score),
-                    color: '#fff',
-                  }}
-                    title={SCORE_LABELS[r.compliance_score]}
-                  >
-                    {r.compliance_score}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 32, height: 32, borderRadius: '50%',
+                      fontWeight: 700, fontSize: 16,
+                      background: scoreColor(r.compliance_score),
+                      color: '#fff',
+                    }}
+                      title={SCORE_LABELS[r.compliance_score]}
+                    >
+                      {r.compliance_score}
+                    </span>
+                    {isSeniorValidator && (() => {
+                      const desc = scoreDesc(validation, r.compliance_score);
+                      return desc ? (
+                        <span style={{ fontSize: 11, color: scoreColor(r.compliance_score), fontWeight: 600, maxWidth: 120, lineHeight: 1.3, textAlign: 'right' }}>
+                          {desc}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                 ) : (
                   <span className="small">No score</span>
                 )}
@@ -531,9 +562,17 @@ export default function ValidationDetail() {
                 }}>
                   {validation.validation_score}
                 </span>
-                <span style={{ fontSize: 14, color: scoreColor(validation.validation_score), fontWeight: 600 }}>
-                  {SCORE_LABELS[validation.validation_score]}
-                </span>
+                <div>
+                  <div style={{ fontSize: 14, color: scoreColor(validation.validation_score), fontWeight: 600 }}>
+                    {SCORE_LABELS[validation.validation_score]}
+                  </div>
+                  {isSeniorValidator && (() => {
+                    const desc = scoreDesc(validation, validation.validation_score);
+                    return desc ? (
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3, lineHeight: 1.4 }}>{desc}</div>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             ) : <span className="small">Not scored</span>
           ) : (
