@@ -91,6 +91,12 @@ export function getAccessToken(): string | null {
   return t;
 }
 
+// The id_token is the JWT the backend can JWKS-verify (the access_token is opaque
+// on the NBG IdP). Sent as X-Id-Token on /api calls so the Core can authenticate.
+export function getIdToken(): string | null {
+  return sessionStorage.getItem(IDTOKEN_KEY);
+}
+
 export function getIdentity(): Identity | null {
   // Prefer the userinfo profile (has email/name); fall back to id_token (sub only).
   const stored = sessionStorage.getItem(PROFILE_KEY);

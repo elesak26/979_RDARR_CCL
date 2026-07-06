@@ -1,4 +1,4 @@
-import { getAccessToken, isAuthEnabled, beginLogin } from '../auth/oidc';
+import { getAccessToken, getIdToken, isAuthEnabled, beginLogin } from '../auth/oidc';
 
 const BASE = '/api';
 const STORAGE_KEY = 'ccl-dev-user';
@@ -34,6 +34,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
   const bearer = ensureBearer();
   if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+  // The Core JWKS-verifies the id_token (the access_token is opaque on the NBG IdP).
+  const idToken = getIdToken();
+  if (idToken) headers['X-Id-Token'] = idToken;
   const uid = getUserId();
   if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
@@ -48,6 +51,9 @@ async function upload<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
   const bearer = ensureBearer();
   if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+  // The Core JWKS-verifies the id_token (the access_token is opaque on the NBG IdP).
+  const idToken = getIdToken();
+  if (idToken) headers['X-Id-Token'] = idToken;
   const uid = getUserId();
   if (uid) headers['X-User-Id'] = uid;
   const res = await fetch(`${BASE}${path}`, { method: 'POST', body: formData, headers });
