@@ -46,6 +46,7 @@ export default function MyAssignments({ currentUser }: Props) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [attachments, setAttachments] = useState<Record<number, Attachment[]>>({});
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
+  const [uploadWarning, setUploadWarning] = useState<Record<number, string | null>>({});
   const fileRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // Only show the sub-unit picker when the user has genuinely distinct codes (not just split material-risk
@@ -157,11 +158,15 @@ export default function MyAssignments({ currentUser }: Props) {
 
   async function handleUpload(r: Response, file: File) {
     setUploading(prev => ({ ...prev, [r.id]: true }));
+    setUploadWarning(prev => ({ ...prev, [r.id]: null }));
     try {
       const fd = new FormData();
       fd.append('file', file);
       const att = await api.upload<Attachment>(`/cycles/${r.cycle_id}/responses/${r.id}/attachments`, fd);
       setAttachments(prev => ({ ...prev, [r.id]: [...(prev[r.id] ?? []), att] }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Upload failed';
+      setUploadWarning(prev => ({ ...prev, [r.id]: msg }));
     } finally {
       setUploading(prev => ({ ...prev, [r.id]: false }));
       if (fileRefs.current[r.id]) fileRefs.current[r.id]!.value = '';
@@ -566,6 +571,17 @@ export default function MyAssignments({ currentUser }: Props) {
                                       ? <><span style={{ fontSize: 13 }}>⏳</span> Uploading…</>
                                       : <><span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Attach another file…</>}
                                   </button>
+                                  {uploadWarning[r.id] && (
+                                    <div style={{
+                                      marginTop: 6, padding: '6px 10px', fontSize: 12,
+                                      borderRadius: 6, border: '1px solid #f59e0b',
+                                      background: '#fffbeb', color: '#92400e',
+                                      display: 'flex', alignItems: 'flex-start', gap: 6,
+                                    }}>
+                                      <span style={{ flexShrink: 0 }}>⚠️</span>
+                                      <span>{uploadWarning[r.id]}</span>
+                                    </div>
+                                  )}
                                 </>
                               )}
                             </div>

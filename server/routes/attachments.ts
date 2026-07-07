@@ -77,14 +77,27 @@ router.post(
     try {
       const { id: responseId } = req.params;
       const file = req.file;
+      const decodedName = decodeFilename(file.originalname);
+
+      // Duplicate-file check: same filename already attached to this response
+      const existing = await query<{ id: number }>(
+        `SELECT id FROM response_attachments WHERE response_id = $1 AND file_name = $2`,
+        [responseId, decodedName]
+      );
+      if (existing.rowCount > 0) {
+        fs.unlink(file.path, () => {});
+        res.status(409).json({ error: `A file named "${decodedName}" is already attached to this response.` });
+        return;
+      }
+
       const result = await query(
         `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
          OUTPUT INSERTED.*
          VALUES ($1, $2, $3, $4)`,
-        [responseId, decodeFilename(file.originalname), file.filename, req.user?.display_name ?? null]
+        [responseId, decodedName, file.filename, req.user?.display_name ?? null]
       );
       const saved = result.rows[0];
-      logAudit({ action: 'attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(saved.id), details: { response_id: responseId, file_name: decodeFilename(file.originalname) } });
+      logAudit({ action: 'attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(saved.id), details: { response_id: responseId, file_name: decodedName } });
       res.status(201).json(saved);
     } catch (err) {
       next(err);

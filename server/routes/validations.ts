@@ -594,6 +594,19 @@ router.post(
     }
     try {
       const { id, cycleId } = req.params;
+      const decodedName = decodeFilename(req.file.originalname);
+
+      // Duplicate-file check
+      const existing = await query<{ id: number }>(
+        `SELECT id FROM validation_attachments WHERE validation_id = $1 AND file_name = $2`,
+        [id, decodedName]
+      );
+      if (existing.rowCount > 0) {
+        fs.unlink(req.file.path, () => {});
+        res.status(409).json({ error: `A file named "${decodedName}" is already attached to this validation.` });
+        return;
+      }
+
       const metaResult = await query<{ question_id: number; bu_code: string | null; cycle_name: string | null; item_number: number | null }>(
         `SELECT v.question_id, v.bu_code, c.name AS cycle_name, q.item_number
          FROM validations v
@@ -606,9 +619,9 @@ router.post(
       const result = await query(
         `INSERT INTO validation_attachments (validation_id, file_name, file_path, uploaded_by)
          OUTPUT INSERTED.* VALUES ($1, $2, $3, $4)`,
-        [id, decodeFilename(req.file.originalname), req.file.filename, req.user?.display_name ?? null]
+        [id, decodedName, req.file.filename, req.user?.display_name ?? null]
       );
-      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(String(cycleId), 10), details: { file_name: decodeFilename(req.file.originalname), question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
+      logAudit({ action: 'validation_attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(id), cycle_id: parseInt(String(cycleId), 10), details: { file_name: decodedName, question_id: meta?.question_id ?? null, bu_code: meta?.bu_code ?? null, item_number: meta?.item_number ?? null } });
       res.status(201).json(result.rows[0]);
     } catch (err) {
       next(err);

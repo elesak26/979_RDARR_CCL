@@ -34,6 +34,7 @@ export default function ValidationDetail() {
   const [attachments, setAttachments] = useState<Record<number, Attachment[]>>({});
   const [valAttachments, setValAttachments] = useState<Attachment[]>([]);
   const [uploadingValAttach, setUploadingValAttach] = useState(false);
+  const [uploadValWarning, setUploadValWarning] = useState<string | null>(null);
   const valFileRef = useRef<HTMLInputElement | null>(null);
   const [detailResponse, setDetailResponse] = useState<Response | null>(null);
   const buName = useBuNames();
@@ -210,6 +211,7 @@ export default function ValidationDetail() {
   async function handleValAttachUpload(file: File) {
     if (!validation || !cycle) return;
     setUploadingValAttach(true);
+    setUploadValWarning(null);
     setSaveError(null);
     try {
       const formData = new FormData();
@@ -217,7 +219,8 @@ export default function ValidationDetail() {
       const saved = await api.upload<Attachment>(`/cycles/${cycle.id}/validations/${validation.id}/attachments`, formData);
       setValAttachments(prev => [...prev, saved]);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Upload failed');
+      const msg = e instanceof Error ? e.message : 'Upload failed';
+      setUploadValWarning(msg);
     } finally {
       setUploadingValAttach(false);
     }
@@ -373,7 +376,7 @@ export default function ValidationDetail() {
           <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Requirement</div>
           <div style={{ fontSize: 14, lineHeight: 1.6 }}>{validation.requirement ?? '—'}</div>
         </div>
-        {isSeniorValidator && validation.expectations && (
+        {(isValidator || isSeniorValidator) && validation.expectations && (
           <div style={{ marginBottom: 0 }}>
             <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Expectation</div>
             <div style={{
@@ -416,7 +419,7 @@ export default function ValidationDetail() {
                     >
                       {r.compliance_score}
                     </span>
-                    {isSeniorValidator && (() => {
+                    {(isValidator || isSeniorValidator) && (() => {
                       const desc = scoreDesc(validation, r.compliance_score);
                       return desc ? (
                         <span style={{ fontSize: 11, color: scoreColor(r.compliance_score), fontWeight: 600, maxWidth: 120, lineHeight: 1.3, textAlign: 'right' }}>
@@ -743,6 +746,17 @@ export default function ValidationDetail() {
                     ? <><span style={{ fontSize: 13 }}>⏳</span> Uploading…</>
                     : <><span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Attach another file…</>}
                 </button>
+                {uploadValWarning && (
+                  <div style={{
+                    marginTop: 6, padding: '6px 10px', fontSize: 12,
+                    borderRadius: 6, border: '1px solid #f59e0b',
+                    background: '#fffbeb', color: '#92400e',
+                    display: 'flex', alignItems: 'flex-start', gap: 6,
+                  }}>
+                    <span style={{ flexShrink: 0 }}>⚠️</span>
+                    <span>{uploadValWarning}</span>
+                  </div>
+                )}
               </>
             )}
             {!canEdit && valAttachments.length === 0 && (
