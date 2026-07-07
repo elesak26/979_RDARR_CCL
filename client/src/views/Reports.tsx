@@ -1037,7 +1037,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 />
                 <CompletionRing
                   pct={validationPct}
-                  label="Validation"
+                  label="Validated"
                   sublabel={`${summary.counts.total_validated} / ${summary.counts.total_questions} questions`}
                 />
               </div>
@@ -1050,7 +1050,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 {[
                   { label: 'Total Questions', value: summary.counts.total_questions, color: 'var(--muted)', icon: '📋' },
                   { label: 'Sent for Evaluation', value: summary.counts.total_submitted, color: 'var(--accent)', icon: '📨' },
-                  { label: 'In Validation', value: summary.counts.total_validated, color: 'var(--warn)', icon: '🔍' },
+                  { label: 'Awaiting SV Approval', value: summary.counts.total_validated, color: 'var(--warn)', icon: '🔍' },
                   { label: 'Closed', value: summary.counts.total_closed_questions, color: 'var(--ok)', icon: '✅' },
                 ].map(card => (
                   <div key={card.label} style={{

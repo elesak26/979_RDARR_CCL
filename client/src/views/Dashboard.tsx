@@ -123,8 +123,38 @@ export default function Dashboard({ currentUser }: Props) {
   const pendingCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'pending').length : 0;
   const inReviewCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'in_review').length : 0;
   const rejectedCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'rejected').length : 0;
-  const pendingApprovalCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'pending_approval').length : 0;
-  const closedValCount = hasActiveCycles ? filteredValidations.filter(v => v.status === 'closed').length : 0;
+  // Count questions (not individual BU rows) where every validation is pending_approval or closed
+  // and at least one is still pending_approval — matching what Validation Overview shows.
+  // Count questions (not BU rows) ready for SV action, plus the raw assessment count for context.
+  const { pendingApprovalCount, pendingApprovalAssessments } = hasActiveCycles ? (() => {
+    const byQuestion = new Map<number, { allDone: boolean; anyPending: boolean; pendingRows: number }>();
+    for (const v of filteredValidations) {
+      const qid = v.question_id;
+      const prev = byQuestion.get(qid) ?? { allDone: true, anyPending: false, pendingRows: 0 };
+      byQuestion.set(qid, {
+        allDone: prev.allDone && (v.status === 'pending_approval' || v.status === 'closed'),
+        anyPending: prev.anyPending || v.status === 'pending_approval',
+        pendingRows: prev.pendingRows + (v.status === 'pending_approval' ? 1 : 0),
+      });
+    }
+    let count = 0; let assessments = 0;
+    for (const { allDone, anyPending, pendingRows } of byQuestion.values()) {
+      if (allDone && anyPending) { count++; assessments += pendingRows; }
+    }
+    return { pendingApprovalCount: count, pendingApprovalAssessments: assessments };
+  })() : { pendingApprovalCount: 0, pendingApprovalAssessments: 0 };
+  // Count closed questions (not raw rows) for consistency.
+  const closedValCount = hasActiveCycles ? (() => {
+    const byQuestion = new Map<number, { total: number; closed: number }>();
+    for (const v of filteredValidations) {
+      const prev = byQuestion.get(v.question_id) ?? { total: 0, closed: 0 };
+      byQuestion.set(v.question_id, {
+        total: prev.total + 1,
+        closed: prev.closed + (v.status === 'closed' ? 1 : 0),
+      });
+    }
+    return [...byQuestion.values()].filter(e => e.total === e.closed).length;
+  })() : 0;
 
   const cycleQS = selectedCycleId !== null ? `&cycle_id=${selectedCycleId}` : '';
 
@@ -542,7 +572,17 @@ export default function Dashboard({ currentUser }: Props) {
             />
             <KpiCard
               label={<span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>Pending Approval <ActionBadge /></span>}
-              value={<span style={{ color: '#7c3aed' }}>{pendingApprovalCount}</span>}
+              value={
+                <div>
+                  <span style={{ color: '#7c3aed' }}>{pendingApprovalCount}</span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}> items</span>
+                  {pendingApprovalAssessments > 0 && pendingApprovalAssessments !== pendingApprovalCount && (
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                      {pendingApprovalAssessments} assessments
+                    </div>
+                  )}
+                </div>
+              }
               onClick={pendingApprovalCount > 0
                 ? () => navigate(`/validation-overview${selectedCycleId !== null ? `?cycle=${selectedCycleId}` : ''}`)
                 : undefined}
@@ -550,7 +590,12 @@ export default function Dashboard({ currentUser }: Props) {
             />
             <KpiCard
               label="Closed"
-              value={<span style={{ color: 'var(--ok)' }}>{closedValCount}</span>}
+              value={
+                <div>
+                  <span style={{ color: 'var(--ok)' }}>{closedValCount}</span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}> items</span>
+                </div>
+              }
               onClick={closedValCount > 0
                 ? () => navigate(`/validation-overview${selectedCycleId !== null ? `?cycle=${selectedCycleId}` : ''}`)
                 : undefined}

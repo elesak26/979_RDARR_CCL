@@ -41,7 +41,7 @@ router.get(
               SELECT 1 FROM responses r2
               LEFT JOIN validations v ON v.cycle_id = r2.cycle_id AND v.question_id = r2.question_id AND v.bu_code = r2.bu_code
               WHERE r2.cycle_id = r.cycle_id AND r2.question_id = r.question_id AND r2.status = 'submitted'
-                AND (v.id IS NULL OR v.validation_score IS NULL)
+                AND (v.id IS NULL OR v.status <> 'pending_approval')
             ))                                                                                                            AS total_validated,
            (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed')           AS total_closed,
            (SELECT COUNT(DISTINCT qa.question_id)

@@ -148,8 +148,41 @@ export default function ValidationQueue() {
     ? cycleFiltered
     : cycleFiltered.filter(i => i.bu_code === buFilter);
 
-  const countByStatus = (s: string) => items.filter(i => i.status === s).length;
-  const countByCycleStatus = (cid: number, s: string) => items.filter(i => i.cycleId === cid && i.status === s).length;
+  const countByStatus = (s: string) => {
+    if (s !== 'pending_approval') return items.filter(i => i.status === s).length;
+    // For pending_approval: count questions (not BU rows) where every validation
+    // for that question is pending_approval or closed, and at least one is pending_approval.
+    const byQuestion = new Map<string, { allDone: boolean; anyPending: boolean }>();
+    for (const v of items) {
+      const key = `${v.cycleId}:${v.question_id}`;
+      const prev = byQuestion.get(key) ?? { allDone: true, anyPending: false };
+      byQuestion.set(key, {
+        allDone: prev.allDone && (v.status === 'pending_approval' || v.status === 'closed'),
+        anyPending: prev.anyPending || v.status === 'pending_approval',
+      });
+    }
+    let count = 0;
+    for (const { allDone, anyPending } of byQuestion.values()) {
+      if (allDone && anyPending) count++;
+    }
+    return count;
+  };
+  const countByCycleStatus = (cid: number, s: string) => {
+    if (s !== 'pending_approval') return items.filter(i => i.cycleId === cid && i.status === s).length;
+    const byQuestion = new Map<number, { allDone: boolean; anyPending: boolean }>();
+    for (const v of items.filter(i => i.cycleId === cid)) {
+      const prev = byQuestion.get(v.question_id) ?? { allDone: true, anyPending: false };
+      byQuestion.set(v.question_id, {
+        allDone: prev.allDone && (v.status === 'pending_approval' || v.status === 'closed'),
+        anyPending: prev.anyPending || v.status === 'pending_approval',
+      });
+    }
+    let count = 0;
+    for (const { allDone, anyPending } of byQuestion.values()) {
+      if (allDone && anyPending) count++;
+    }
+    return count;
+  };
 
   const multiCycle = cyclesWithItems.length > 1 && cycleFilter === 'all';
 
@@ -160,6 +193,15 @@ export default function ValidationQueue() {
       if (sectionItems.length === 0) return null;
       const isCollapsed = section.collapsible && !closedExpanded;
       const showStatusCol = section.statuses.length > 1;
+
+      // For "Awaiting SV": show distinct question count in badge, raw assessment count as hint
+      const isAwaitingSV = section.id === 'awaiting';
+      const awaitingQuestions = isAwaitingSV ? (() => {
+        const qs = new Set<number>();
+        for (const v of sectionItems) qs.add(v.question_id);
+        return qs.size;
+      })() : 0;
+      const badgeCount = isAwaitingSV ? awaitingQuestions : sectionItems.length;
 
       return (
         <div key={section.id} style={{ marginBottom: 20 }}>
@@ -183,9 +225,14 @@ export default function ValidationQueue() {
               background: section.color, color: '#fff',
               borderRadius: 10, padding: '1px 7px', lineHeight: 1.6,
             }}>
-              {sectionItems.length}
+              {badgeCount}
             </span>
-            {section.readOnly && !section.collapsible && (
+            {isAwaitingSV && sectionItems.length !== awaitingQuestions && (
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                · {sectionItems.length} assessments
+              </span>
+            )}
+            {!isAwaitingSV && section.readOnly && !section.collapsible && (
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>· view only</span>
             )}
             {section.collapsible && (

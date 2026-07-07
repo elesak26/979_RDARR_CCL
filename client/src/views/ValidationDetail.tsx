@@ -370,17 +370,17 @@ export default function ValidationDetail() {
         <h3 style={{ margin: '0 0 14px', fontSize: 15 }}>Question Details</h3>
         <div style={{ marginBottom: 12 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Thematic Area</div>
-          <div style={{ fontSize: 13 }}>{validation.thematic_area ?? '—'}</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{validation.thematic_area ?? '—'}</div>
         </div>
         <div style={{ marginBottom: 12 }}>
           <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Requirement</div>
-          <div style={{ fontSize: 14, lineHeight: 1.6 }}>{validation.requirement ?? '—'}</div>
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>{validation.requirement ?? '—'}</div>
         </div>
         {(isValidator || isSeniorValidator) && validation.expectations && (
           <div style={{ marginBottom: 0 }}>
             <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Expectation</div>
             <div style={{
-              fontSize: 14, lineHeight: 1.6,
+              fontSize: 13, lineHeight: 1.6,
               padding: '10px 12px', borderRadius: 6,
               background: 'var(--accent)0a', border: '1px solid var(--accent)30',
             }}>
