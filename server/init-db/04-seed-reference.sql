@@ -13,7 +13,7 @@ BEGIN
   INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'908', N'Operational Risk Management', 8);
   INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'006-956', N'Finance Reporting', 9);
   INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'902', N'Model Validation', 10);
-  INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'905', N'Group IT PMO & Governance', 11);
+  INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'997', N'Enterprise Data, Risk & Insights Solutions', 11);
   INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'974', N'Group Internal Control', 12);
   INSERT INTO dbo.respondent_units (bu_code, bu_name, sort_order) VALUES (N'979', N'RDARR Validation', 13);
 END
@@ -72,7 +72,7 @@ BEGIN
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'006-956', 0.111111111111111111);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'023', 0.111111111111111111);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'030', 0.111111111111111111);
-  INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'905', 0.111111111111111111);
+  INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'997', 0.111111111111111111);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'908', 0.111111111111111111);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'961-IRRBB', 0.111111111111111111);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (19, N'961-Liquidity', 0.111111111111111111);
@@ -82,7 +82,7 @@ BEGIN
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'006-956', 0.125000000000000000);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'023', 0.125000000000000000);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'030', 0.125000000000000000);
-  INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'905', 0.125000000000000000);
+  INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'997', 0.125000000000000000);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'908', 0.125000000000000000);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'961-IRRBB', 0.125000000000000000);
   INSERT INTO dbo.ccl_item_weights (item_number, bu_code, weight) VALUES (21, N'961-Liquidity', 0.125000000000000000);
