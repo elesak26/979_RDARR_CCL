@@ -49,15 +49,19 @@ export default function MyAssignments({ currentUser }: Props) {
   const [uploadWarning, setUploadWarning] = useState<Record<number, string | null>>({});
   const fileRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
-  // Only show the sub-unit picker when the user has genuinely distinct codes (not just split material-risk
-  // sub-entities that all belong to the same organisational unit, e.g. 961-IRRBB / 961-Market / 961-Liquidity).
-  // We detect this by checking whether every extra code is a prefix-variant of the primary code.
   const primaryCode = currentUser.primary_unit_code ?? '';
-  const hasDistinctSubUnits = currentUser.unit_codes.length > 1 &&
-    currentUser.unit_codes.some(c => c !== primaryCode && !c.startsWith(primaryCode + '-'));
+  // Material-risk sub-codes: prefix-variant codes belonging to the same BU (e.g. 961-Market, 961-Liquidity, 961-IRRBB).
+  // Each represents a separate questionnaire form.
+  const materialRiskSubCodes = currentUser.unit_codes.filter(c => c !== primaryCode && c.startsWith(primaryCode + '-'));
+  const hasMaterialRiskSubs = materialRiskSubCodes.length > 0;
+  // Distinct sub-units: truly separate codes (not prefix-variants) — e.g., a user covering multiple divisions.
+  const hasDistinctSubUnits = !hasMaterialRiskSubs && currentUser.unit_codes.length > 1 &&
+    currentUser.unit_codes.some(c => c !== primaryCode);
   const subUnitCodes = hasDistinctSubUnits ? currentUser.unit_codes : null;
   const [selectedSubUnit, setSelectedSubUnit] = useState<string>(
-    currentUser.primary_unit_code ?? currentUser.unit_codes[0] ?? ''
+    hasMaterialRiskSubs
+      ? (materialRiskSubCodes[0] ?? '')
+      : (currentUser.primary_unit_code ?? currentUser.unit_codes[0] ?? '')
   );
 
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -70,7 +74,12 @@ export default function MyAssignments({ currentUser }: Props) {
   // Which cycle the user is currently working on (URL param takes priority on first load)
   const [selectedCycleId, setSelectedCycleId] = useState<number | null>(urlCycleId);
 
-  const activeBuCode = selectedSubUnit || currentUser.primary_unit_code || '';
+  // For material-risk BUs, always fetch with the primary code (server expands to all sub-codes).
+  // For distinct sub-units, fetch with the selected sub-unit code.
+  const fetchBuCode = hasMaterialRiskSubs
+    ? (currentUser.primary_unit_code || '')
+    : (selectedSubUnit || currentUser.primary_unit_code || '');
+  const activeBuCode = fetchBuCode;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -247,8 +256,11 @@ export default function MyAssignments({ currentUser }: Props) {
   const selectedCycle = activeCycles.find(c => c.id === activeCycleId) ?? activeCycles[0];
   const isClosed = selectedCycle.status === 'closed';
 
-  // All responses, scoped to the currently selected cycle
-  const cycleResponses = responses.filter(r => r.cycle_id === activeCycleId);
+  // All responses, scoped to the currently selected cycle (and sub-code when in material-risk mode)
+  const cycleResponses = responses.filter(r =>
+    r.cycle_id === activeCycleId &&
+    (!hasMaterialRiskSubs || r.bu_code === selectedSubUnit)
+  );
   const draftResponses = cycleResponses.filter(r => r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned');
   const submittedResponses = cycleResponses.filter(r => r.status === 'submitted');
   const allScored = draftResponses.every(r => (drafts[r.id]?.score ?? null) !== null);
@@ -262,11 +274,26 @@ export default function MyAssignments({ currentUser }: Props) {
     ? submittedResponses
     : cycleResponses;
 
-  // Per-cycle completion summary (used by cycle tabs)
+  // Per-cycle completion summary (used by cycle tabs); scoped to selected sub-code in material-risk mode
   function cycleCompletion(cycleId: number) {
-    const rs = responses.filter(r => r.cycle_id === cycleId);
+    const rs = responses.filter(r =>
+      r.cycle_id === cycleId &&
+      (!hasMaterialRiskSubs || r.bu_code === selectedSubUnit)
+    );
     const submitted = rs.filter(r => r.status === 'submitted').length;
     return { total: rs.length, submitted, done: rs.length > 0 && submitted === rs.length };
+  }
+
+  // Display label for a material-risk sub-code
+  const MATERIAL_RISK_LABELS: Record<string, string> = {
+    'Market Risk': 'Market Risk',
+    'Liquidity Risk': 'Liquidity Risk',
+    'IRRBB': 'IRRBB Risk',
+  };
+  function subCodeLabel(code: string): string {
+    // Extract suffix after primary_code- prefix
+    const suffix = code.startsWith(primaryCode + '-') ? code.slice(primaryCode.length + 1) : code;
+    return MATERIAL_RISK_LABELS[suffix] ?? suffix;
   }
 
   function renderCycleSection(cycle: Cycle, pool: Response[]) {
@@ -626,7 +653,7 @@ export default function MyAssignments({ currentUser }: Props) {
   return (
     <div>
       {/* Topbar */}
-      <div className="topbar" style={{ marginBottom: 16 }}>
+      <div className="topbar" style={{ marginBottom: hasMaterialRiskSubs ? 0 : 16 }}>
         <div className="left">
           <strong style={{ fontSize: 18 }}>Self-Assessment</strong>
           <span className="chip">{currentUser.display_name || activeBuCode}</span>
@@ -689,6 +716,72 @@ export default function MyAssignments({ currentUser }: Props) {
           )}
         </div>
       </div>
+
+      {/* Material-risk questionnaire tabs — shown for BUs with sub-codes like 961-Market */}
+      {hasMaterialRiskSubs && (
+        <div style={{
+          marginBottom: 16, marginTop: 16,
+          display: 'flex', gap: 0,
+          background: 'var(--panel)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius2)',
+          overflow: 'hidden',
+        }}>
+          {materialRiskSubCodes.map((code, idx) => {
+            const isSelected = code === selectedSubUnit;
+            const subResponses = responses.filter(r => r.bu_code === code && r.cycle_id === activeCycleId);
+            const subSubmitted = subResponses.filter(r => r.status === 'submitted').length;
+            const subDone = subResponses.length > 0 && subSubmitted === subResponses.length;
+            return (
+              <button
+                key={code}
+                onClick={() => {
+                  setSelectedSubUnit(code);
+                  setStatusFilter('all');
+                  setExpanded(null);
+                  setSubmitError(null);
+                }}
+                style={{
+                  flex: '1 1 0',
+                  padding: '12px 16px',
+                  border: 'none',
+                  borderRight: idx < materialRiskSubCodes.length - 1 ? '1px solid var(--line)' : 'none',
+                  borderBottom: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
+                  background: isSelected ? 'var(--accent-light)' : 'var(--panel)',
+                  color: isSelected ? 'var(--accent-dark)' : 'var(--text)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background .12s',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <strong style={{ fontSize: 13 }}>{subCodeLabel(code)}</strong>
+                  {subDone && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '1px 6px',
+                      borderRadius: 999, background: 'rgba(40,167,69,.15)',
+                      color: 'var(--ok)', letterSpacing: '.3px',
+                    }}>✓ DONE</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, height: 4, background: 'var(--line)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${subResponses.length > 0 ? (subSubmitted / subResponses.length) * 100 : 0}%`,
+                      background: subDone ? 'var(--ok)' : 'var(--accent)',
+                      borderRadius: 2, transition: 'width .3s ease',
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                    {subSubmitted}/{subResponses.length} submitted
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Cycle picker — shown only when 2+ active cycles */}
       {multiCycle && (

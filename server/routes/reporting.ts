@@ -23,41 +23,52 @@ router.get(
         total_qa_rows: string;
         total_respondents: string;
       }>(
-        `SELECT
-           (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)                      AS total_questions,
-           (SELECT COUNT(DISTINCT qa.question_id)
-            FROM question_applicability qa
-            WHERE qa.cycle_id = $1
-            AND NOT EXISTS (
-              SELECT 1 FROM question_applicability qa2
-              LEFT JOIN responses r ON r.cycle_id=qa2.cycle_id AND r.question_id=qa2.question_id AND r.bu_code=qa2.bu_code
-              WHERE qa2.cycle_id=qa.cycle_id AND qa2.question_id=qa.question_id
-                AND (r.id IS NULL OR r.status <> 'submitted')
-            ))                                                                                                            AS total_submitted,
-           (SELECT COUNT(DISTINCT r.question_id)
-            FROM responses r
-            WHERE r.cycle_id = $1 AND r.status = 'submitted'
-            AND NOT EXISTS (
-              SELECT 1 FROM responses r2
-              LEFT JOIN validations v ON v.cycle_id = r2.cycle_id AND v.question_id = r2.question_id AND v.bu_code = r2.bu_code
-              WHERE r2.cycle_id = r.cycle_id AND r2.question_id = r.question_id AND r2.status = 'submitted'
-                AND (v.id IS NULL OR v.status <> 'pending_approval')
-            ))                                                                                                            AS total_validated,
-           (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed')           AS total_closed,
-           (SELECT COUNT(DISTINCT qa.question_id)
-            FROM question_applicability qa
-            WHERE qa.cycle_id = $1
-            AND NOT EXISTS (
-              SELECT 1 FROM question_applicability qa2
-              LEFT JOIN validations v
-                ON v.cycle_id = qa2.cycle_id AND v.question_id = qa2.question_id AND v.bu_code = qa2.bu_code
-              WHERE qa2.cycle_id = qa.cycle_id AND qa2.question_id = qa.question_id
-                AND (v.id IS NULL OR v.status <> 'closed')
-            ))                                                                                                        AS total_closed_questions,
-           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1)                                                    AS total_validations,
-           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status IN ('closed','rejected','returned'))     AS total_actioned,
-           (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)                                         AS total_qa_rows,
-           (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)                          AS total_respondents`,
+        `WITH expected_bu AS (
+             SELECT q.id AS question_id, COUNT(*) AS expected_bu_count
+             FROM questions q
+             JOIN ccl_item_weights w ON w.item_number = q.item_number
+             GROUP BY q.id
+           ),
+           validated_questions AS (
+             SELECT v.question_id
+             FROM validations v
+             JOIN expected_bu e ON e.question_id = v.question_id
+             JOIN questions q   ON q.id = v.question_id
+             JOIN ccl_item_weights w ON w.item_number = q.item_number AND w.bu_code = v.bu_code
+             WHERE v.cycle_id = $1
+             GROUP BY v.question_id, e.expected_bu_count
+             HAVING
+               COUNT(CASE WHEN v.status = 'pending_approval' THEN 1 END) > 0
+               AND COUNT(CASE WHEN v.status NOT IN ('pending_approval','closed') THEN 1 END) = 0
+               AND COUNT(DISTINCT v.bu_code) = e.expected_bu_count
+           )
+           SELECT
+             (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)  AS total_questions,
+             (SELECT COUNT(DISTINCT qa.question_id)
+              FROM question_applicability qa
+              WHERE qa.cycle_id = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM question_applicability qa2
+                LEFT JOIN responses r ON r.cycle_id=qa2.cycle_id AND r.question_id=qa2.question_id AND r.bu_code=qa2.bu_code
+                WHERE qa2.cycle_id=qa.cycle_id AND qa2.question_id=qa.question_id
+                  AND (r.id IS NULL OR r.status <> 'submitted')
+              ))                                                                                    AS total_submitted,
+             (SELECT COUNT(*) FROM validated_questions)                                            AS total_validated,
+             (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed') AS total_closed,
+             (SELECT COUNT(DISTINCT qa.question_id)
+              FROM question_applicability qa
+              WHERE qa.cycle_id = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM question_applicability qa2
+                LEFT JOIN validations v
+                  ON v.cycle_id = qa2.cycle_id AND v.question_id = qa2.question_id AND v.bu_code = qa2.bu_code
+                WHERE qa2.cycle_id = qa.cycle_id AND qa2.question_id = qa.question_id
+                  AND (v.id IS NULL OR v.status <> 'closed')
+              ))                                                                                    AS total_closed_questions,
+             (SELECT COUNT(*) FROM validations WHERE cycle_id = $1)                               AS total_validations,
+             (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status IN ('closed','rejected','returned')) AS total_actioned,
+             (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)                    AS total_qa_rows,
+             (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)     AS total_respondents`,
         [cycleId]
       );
 

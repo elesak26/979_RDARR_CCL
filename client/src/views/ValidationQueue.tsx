@@ -133,7 +133,7 @@ export default function ValidationQueue() {
   const statusFiltered = effectiveFilter
     ? items.filter(i => i.status === effectiveFilter || i.status === 'closed')
     : isValidator
-      ? items.filter(i => ['in_review', 'rejected', 'returned', 'closed'].includes(i.status))
+      ? items.filter(i => ['in_review', 'rejected', 'returned', 'pending_approval', 'closed'].includes(i.status))
       : items;
 
   const cyclesWithItems = cycles.filter(c => statusFiltered.some(i => i.cycleId === c.id));

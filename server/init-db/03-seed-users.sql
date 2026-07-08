@@ -12,7 +12,7 @@ BEGIN
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-905', N'Enterprise Data, Risk & Insights Solutions', N'Responder', N'["997"]', N'997', 1);
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-908', N'Risk Function (908)', N'Responder', N'["908"]', N'908', 1);
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-956', N'Finance Function (956)', N'Responder', N'["956"]', N'956', 0);
-  INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-961', N'Risk Function (961)', N'Responder', N'["961"]', N'961', 1);
+  INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-961', N'Group Financial & Liquidity Risk Management', N'Responder', N'["961","961-Market","961-Liquidity","961-IRRBB"]', N'961', 1);
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-966', N'Data Governance Unit', N'Responder', N'["966"]', N'966', 1);
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-974', N'Internal Control Function', N'Responder', N'["974"]', N'974', 1);
   INSERT INTO dbo.users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES (N'bu-979', N'RDARR Validation Unit', N'Responder', N'["979"]', N'979', 1);
