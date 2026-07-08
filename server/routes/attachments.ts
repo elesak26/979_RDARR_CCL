@@ -84,7 +84,7 @@ router.post(
         `SELECT id FROM response_attachments WHERE response_id = $1 AND file_name = $2`,
         [responseId, decodedName]
       );
-      if (existing.rowCount > 0) {
+      if (existing.rows.length > 0) {
         fs.unlink(file.path, () => {});
         res.status(409).json({ error: `A file named "${decodedName}" is already attached to this response.` });
         return;

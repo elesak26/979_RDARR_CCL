@@ -615,7 +615,7 @@ router.post(
         `SELECT id FROM validation_attachments WHERE validation_id = $1 AND file_name = $2`,
         [id, decodedName]
       );
-      if (existing.rowCount > 0) {
+      if (existing.rows.length > 0) {
         fs.unlink(req.file.path, () => {});
         res.status(409).json({ error: `A file named "${decodedName}" is already attached to this validation.` });
         return;
