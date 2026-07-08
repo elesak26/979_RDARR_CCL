@@ -363,12 +363,19 @@ router.put(
       }
       logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, new_score: result.rows[0]?.validation_score ?? null } });
 
-      // Auto-close cycle if all validations are now closed
-      const remaining = await query<{ cnt: string }>(
-        `SELECT COUNT(*) AS cnt FROM validations WHERE cycle_id = $1 AND status <> 'closed'`,
+      // Auto-close cycle only when ALL responses are submitted AND all validations are closed.
+      // Checking validations alone is insufficient: if a BU never submitted, no validation row
+      // exists for them, so the count would be 0 even though the cycle is incomplete.
+      const remaining = await query<{ open_validations: string; unsubmitted_responses: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status <> 'closed')        AS open_validations,
+           (SELECT COUNT(*) FROM responses  WHERE cycle_id = $1 AND status NOT IN ('submitted')) AS unsubmitted_responses`,
         [cycleId]
       );
-      if (parseInt(remaining.rows[0].cnt, 10) === 0) {
+      if (
+        parseInt(remaining.rows[0].open_validations, 10) === 0 &&
+        parseInt(remaining.rows[0].unsubmitted_responses, 10) === 0
+      ) {
         await query(
           `UPDATE questionnaire_cycles SET status = 'closed', closed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET() WHERE id = $1 AND status = 'distributed'`,
           [cycleId]
@@ -482,12 +489,19 @@ router.put(
       }
       logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null } });
 
-      // Auto-close cycle if all validations are now closed
-      const remaining = await query<{ cnt: string }>(
-        `SELECT COUNT(*) AS cnt FROM validations WHERE cycle_id = $1 AND status <> 'closed'`,
+      // Auto-close cycle only when ALL responses are submitted AND all validations are closed.
+      // Checking validations alone is insufficient: if a BU never submitted, no validation row
+      // exists for them, so the count would be 0 even though the cycle is incomplete.
+      const remaining = await query<{ open_validations: string; unsubmitted_responses: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status <> 'closed')        AS open_validations,
+           (SELECT COUNT(*) FROM responses  WHERE cycle_id = $1 AND status NOT IN ('submitted')) AS unsubmitted_responses`,
         [cycleId]
       );
-      if (parseInt(remaining.rows[0].cnt, 10) === 0) {
+      if (
+        parseInt(remaining.rows[0].open_validations, 10) === 0 &&
+        parseInt(remaining.rows[0].unsubmitted_responses, 10) === 0
+      ) {
         await query(
           `UPDATE questionnaire_cycles SET status = 'closed', closed_at = SYSDATETIMEOFFSET(), updated_at = SYSDATETIMEOFFSET() WHERE id = $1 AND status = 'distributed'`,
           [cycleId]
