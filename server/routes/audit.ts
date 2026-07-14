@@ -94,8 +94,7 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
       return;
     }
     const row = result.rows[0];
-    // details is a JSON string (nvarchar) in Azure SQL — parse back to object.
-    const details = (typeof row.details === 'string' ? JSON.parse(row.details) : row.details) ?? {};
+    const details = (typeof row.details === 'string' ? row.details : row.details) ?? {};
     const fileName = details.file_name as string | undefined;
     if (!fileName) {
       res.status(404).json({ error: 'No file attached to this entry' });
@@ -108,7 +107,7 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
     if (row.action === 'validation_attachment_uploaded') {
       // entity_id is the validation_id — look up the most recent attachment with this name on this validation
       const r = await query<{ file_name: string; file_path: string }>(
-        `SELECT TOP 1 file_name, file_path FROM validation_attachments
+        `SELECT file_name, file_path FROM validation_attachments
          WHERE validation_id = $1 AND file_name = $2
          ORDER BY uploaded_at DESC`,
         [parseInt(row.entity_id, 10), fileName]
@@ -117,7 +116,7 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
     } else {
       // response attachment or other — entity_id is the response_id
       const r = await query<{ file_name: string; file_path: string }>(
-        `SELECT TOP 1 file_name, file_path FROM response_attachments
+        `SELECT file_name, file_path FROM response_attachments
          WHERE response_id = $1 AND file_name = $2
          ORDER BY uploaded_at DESC`,
         [parseInt(row.entity_id, 10), fileName]

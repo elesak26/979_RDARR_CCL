@@ -4,7 +4,6 @@ import { logAudit } from '../audit';
 
 const router = Router();
 
-// unit_codes is stored as a JSON array (nvarchar) in Azure SQL — parse it back
 // to string[] so the API response shape matches the old pg text[] behaviour.
 function parseUnitCodes<T extends { unit_codes?: unknown }>(row: T): T {
   const uc = row?.unit_codes;
@@ -18,7 +17,7 @@ router.get('/api/users', async (_req: Request, res: Response, next: NextFunction
     const result = await query<{ unit_codes?: unknown }>(
       `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
               u.is_active, u.created_at,
-              (SELECT TOP 1 lh.logged_in_at FROM login_history lh
+              (SELECT lh.logged_in_at FROM login_history lh
                WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC) AS last_login_at
        FROM users u ORDER BY u.display_name`
     );
@@ -55,8 +54,7 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
 
     const result = await query(
       `INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code)
-       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.unit_codes, INSERTED.primary_unit_code, INSERTED.is_active, INSERTED.created_at
-       VALUES ($1, $2, $3, $4, $5)`,
+       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atVALUES ($1, $2, $3, $4, $5)`,
       [id, display_name, role, unit_codes, primary_unit_code]
     );
     logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role } });
@@ -88,8 +86,7 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
          role             = COALESCE($3, role),
          unit_codes       = COALESCE($4, unit_codes),
          primary_unit_code = COALESCE($5, primary_unit_code)
-       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.unit_codes, INSERTED.primary_unit_code, INSERTED.is_active, INSERTED.created_at
-       WHERE id = $1`,
+       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atWHERE id = $1`,
       [id, display_name ?? null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
     );
 
@@ -117,9 +114,8 @@ router.put('/api/users/:id/toggle-active', async (req: Request, res: Response, n
       return;
     }
     const result = await query(
-      `UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
-       OUTPUT INSERTED.id, INSERTED.display_name, INSERTED.role, INSERTED.is_active
-       WHERE id = $1`,
+      `UPDATE users SET is_active = CASE WHEN is_active = true THEN 0 ELSE 1 END
+       RETURNING id, display_name, role, is_activeWHERE id = $1`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -171,7 +167,7 @@ router.delete('/api/users/:id', async (req: Request, res: Response, next: NextFu
   }
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM users OUTPUT DELETED.id WHERE id = $1', [id]);
+    const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
       return;

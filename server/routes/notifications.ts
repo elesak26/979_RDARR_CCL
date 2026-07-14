@@ -10,7 +10,7 @@ router.get('/api/notifications', async (req: Request, res: Response, next: NextF
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
     const result = await query(
-      `SELECT TOP 50 id, title, body, cycle_id, link, is_read, created_at
+      `SELECT id, title, body, cycle_id, link, is_read, created_at
        FROM notifications
        WHERE user_id = $1 AND is_read = 0
        ORDER BY created_at DESC`,

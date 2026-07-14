@@ -8,7 +8,7 @@ export async function notifyRole(
   link?: string,
 ): Promise<void> {
   const users = await query<{ id: string }>(
-    `SELECT id FROM users WHERE role = $1 AND is_active = 1`,
+    `SELECT id FROM users WHERE role = $1 AND is_active = true`,
     [role]
   );
   for (const user of users.rows) {
@@ -40,7 +40,7 @@ export async function notifyBuResponders(
   link?: string,
 ): Promise<void> {
   const users = await query<{ id: string }>(
-    `SELECT id FROM users WHERE role = 'Responder' AND is_active = 1 AND EXISTS (SELECT 1 FROM OPENJSON(unit_codes) WHERE value = $1)`,
+    `SELECT id FROM users WHERE role = 'Responder' AND is_active = true AND unit_codes ? $1`,
     [buCode]
   );
   for (const user of users.rows) {

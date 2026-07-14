@@ -494,7 +494,7 @@ router.get(
           avg_comp_score:      r.avg_comp_score  ? parseFloat(r.avg_comp_score)  : null,
           closed_validations:  parseInt(r.closed_validations, 10),
           submitted_responses: parseInt(r.submitted_responses, 10),
-          // mssql returns NUMERIC as a JS number (0 is falsy); pg returned "0.0" (truthy).
+
           // Guard on != null so a same-day cycle renders 0.0 instead of null.
           cycle_duration_days: r.cycle_duration_days != null ? parseFloat(r.cycle_duration_days) : null,
           bu_count:            parseInt(r.bu_count, 10),

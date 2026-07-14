@@ -1,10 +1,7 @@
 import path from 'path';
 import dotenv from 'dotenv';
 
-// Load .env from server/.env (one level up from CWD when running from server/)
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-// Fallback: also try the parent directory for flexibility
-dotenv.config({ path: path.resolve(process.cwd(), '..', '.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 import express from 'express';
 import helmet from 'helmet';
