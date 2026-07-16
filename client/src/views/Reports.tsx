@@ -804,7 +804,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <line x1="12" y1="15" x2="12" y2="3"/>
                 <polyline points="8 12 12 16 16 12"/>
               </svg>
-              Export Excel
+              Export Scores to Excel
             </button>
           )}
         </div>

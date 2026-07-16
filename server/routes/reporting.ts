@@ -364,32 +364,35 @@ router.get(
       }
       const cycle = cycleRow.rows[0];
 
-      // ── Single sheet: one row per closed validation (question × BU) ───
+      // ── Single sheet: one row per closed validation (question × BU × material_risk) ───
       const rows = await query<{
         bu_code: string;
         display_name: string;
         item_number: string;
         thematic_area: string;
+        bcbs_principle_name: string | null;
         description: string;
         material_risk: string | null;
         validation_score: string | null;
       }>(
         `SELECT
            v.bu_code,
-           COALESCE(u.display_name, v.bu_code)                                    AS display_name,
+           COALESCE(
+             (SELECT display_name FROM users
+              WHERE role = 'Responder' AND unit_codes ? v.bu_code
+              LIMIT 1),
+             v.bu_code
+           )                                                                        AS display_name,
            q.item_number::text,
            q.thematic_area,
-           q.requirement                                                           AS description,
-           CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END AS material_risk,
+           q.bcbs_principle_name,
+           q.requirement                                                            AS description,
+           CASE TRIM(v.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(v.material_risk) END AS material_risk,
            v.validation_score::text
          FROM validations v
          JOIN questions q ON q.id = v.question_id
-         LEFT JOIN responses r
-           ON r.cycle_id = v.cycle_id AND r.question_id = v.question_id AND r.bu_code = v.bu_code AND r.status = 'submitted'
-         LEFT JOIN users u
-           ON u.role = 'Responder' AND u.unit_codes ? v.bu_code
          WHERE v.cycle_id = $1 AND v.status = 'closed'
-         ORDER BY v.bu_code, q.item_number`,
+         ORDER BY v.bu_code, q.item_number::int, v.material_risk NULLS FIRST`,
         [cycleId]
       );
 
@@ -409,12 +412,13 @@ router.get(
       const wb = XLSX.utils.book_new();
 
       const sheetData = [
-        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'Description', 'Material Risk', 'Validation Score', 'Score Label'],
+        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'BCBS239 Principle', 'Description', 'Material Risk', 'Validation Score', 'Score Label'],
         ...rows.rows.map(r => [
           r.bu_code,
           r.display_name,
           r.item_number,
           r.thematic_area,
+          r.bcbs_principle_name ?? '',
           r.description,
           r.material_risk ?? '',
           r.validation_score != null ? parseFloat(r.validation_score) : '',
@@ -422,7 +426,7 @@ router.get(
         ]),
       ];
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
-      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 60 }, { wch: 20 }, { wch: 18 }, { wch: 22 }];
+      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 28 }, { wch: 60 }, { wch: 20 }, { wch: 18 }, { wch: 22 }];
       XLSX.utils.book_append_sheet(wb, ws, 'Validation Scores');
 
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
