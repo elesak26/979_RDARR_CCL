@@ -311,6 +311,11 @@ export default function ValidationDetail() {
               {buName(validation.bu_code)}
             </span>
           )}
+          {validation.material_risk && (
+            <span style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+              {validation.material_risk}
+            </span>
+          )}
           <WorkflowBadge status={validation.status} />
         </div>
         {cycle && <span className="small">{cycle.name} · {cycle.year}</span>}
@@ -392,7 +397,7 @@ export default function ValidationDetail() {
 
       {/* BU Responses */}
       <div style={{ marginBottom: 16 }}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--text)' }}>BU Responses ({responses.length})</h3>
+        <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--text)' }}>Self Assessment</h3>
         {responses.length === 0 && (
           <div className="small" style={{ padding: 12 }}>No responses available yet.</div>
         )}

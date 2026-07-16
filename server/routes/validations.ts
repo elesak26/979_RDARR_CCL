@@ -46,7 +46,7 @@ router.get(
       const { cycleId } = req.params;
       const result = await query(
         `SELECT
-           v.id, v.cycle_id, v.question_id, v.bu_code, v.status,
+           v.id, v.cycle_id, v.question_id, v.bu_code, v.material_risk, v.status,
            v.validation_score, v.justification, v.additional_controls,
            v.validated_by, v.validated_at,
            v.senior_validated_by, v.senior_validated_at, v.senior_rejection_comment,
@@ -57,7 +57,7 @@ router.get(
          JOIN questions q ON q.id = v.question_id
          JOIN questionnaire_cycles c ON c.id = v.cycle_id
          WHERE v.cycle_id = $1
-         ORDER BY q.item_number, v.bu_code`,
+         ORDER BY q.item_number, v.bu_code, v.material_risk`,
         [cycleId]
       );
       res.json(result.rows);
@@ -76,7 +76,7 @@ router.get(
 
       const validationResult = await query(
         `SELECT
-           v.id, v.cycle_id, v.question_id, v.bu_code, v.status,
+           v.id, v.cycle_id, v.question_id, v.bu_code, v.material_risk, v.status,
            v.validation_score, v.justification, v.additional_controls,
            v.validated_by, v.validated_at,
            v.senior_validated_by, v.senior_validated_at, v.senior_rejection_comment,
@@ -96,17 +96,18 @@ router.get(
         return;
       }
 
-      const validation = validationResult.rows[0] as { question_id: number; bu_code: string | null };
+      const validation = validationResult.rows[0] as { question_id: number; bu_code: string | null; material_risk: string | null };
 
-      // Get only this BU's responses for this question+cycle
+      // Get only this BU+material_risk's response for this question+cycle
       const responsesResult = await query(
         `SELECT r.id, r.bu_code, r.material_risk, r.status, r.compliance_score, r.comments,
                 r.responder_id, r.responder_name, r.submitted_at,
                 r.return_comment, r.returned_at
          FROM responses r
          WHERE r.cycle_id = $1 AND r.question_id = $2 AND r.bu_code = $3
+           AND r.material_risk IS NOT DISTINCT FROM $4
          ORDER BY r.material_risk`,
-        [cycleId, validation.question_id, validation.bu_code]
+        [cycleId, validation.question_id, validation.bu_code, validation.material_risk ?? null]
       );
 
       res.json({
@@ -224,11 +225,12 @@ router.put(
       // Notify Senior Validators that a validation item is pending their approval
       const cycleRowV = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
       const cycleNameV = cycleRowV.rows[0]?.name ?? `Cycle ${cycleId}`;
+      const riskLabel = result.rows[0].material_risk ? ` — ${result.rows[0].material_risk}` : '';
       notifyRole('Senior Validator',
         `Validation item pending approval — ${cycleNameV}`,
-        `Item #${result.rows[0].item_number} (${result.rows[0].bu_code}) in cycle "${cycleNameV}" has been submitted for your approval.`,
+        `Item #${result.rows[0].item_number} (${result.rows[0].bu_code}${riskLabel}) in cycle "${cycleNameV}" has been submitted for your approval.`,
         parseInt(String(cycleId), 10),
-        `/validation/${result.rows[0].id}`
+        `/validation-overview/${cycleId}/${result.rows[0].question_id}`
       ).catch(() => {});
 
       res.json(result.rows[0]);
@@ -264,8 +266,9 @@ router.get(
            WHERE cycle_id = $1 AND status = 'submitted'
          ),
          question_status AS (
-           -- Questions where ALL weighted BUs have a submitted self-assessment
-           -- AND every validation row is either pending_approval or closed (Validator finished, SV may or may not have approved)
+           -- Questions where ALL weighted BUs have submitted AND every validation
+           -- row is pending_approval or closed. Count DISTINCT bu_code because a BU
+           -- may have multiple validation rows (one per material_risk).
            SELECT v.question_id
            FROM validations v
            JOIN expected_bu e  ON e.question_id = v.question_id
@@ -274,25 +277,33 @@ router.get(
            JOIN submitted_responses sr ON sr.question_id = v.question_id AND sr.bu_code = v.bu_code
            WHERE v.cycle_id = $1
            GROUP BY v.question_id, e.expected_count
-           HAVING COUNT(*) = e.expected_count
+           HAVING COUNT(DISTINCT v.bu_code) = e.expected_count
               AND COUNT(CASE WHEN v.status NOT IN ('pending_approval', 'closed') THEN 1 END) = 0
          ),
-         bu_self_score AS (
-           SELECT question_id, bu_code,
-                  ROUND(SUM(compliance_score * COALESCE(weight, 1.0)) / NULLIF(SUM(COALESCE(weight, 1.0)), 0), 2) AS self_score
+         response_weights AS (
+           -- Per (question, BU, material_risk) weight as stored on responses from column K.
+           -- This is the authoritative per-row weight; ccl_item_weights sums across
+           -- material risks and must NOT be used for individual-row display.
+           SELECT question_id, bu_code, material_risk,
+                  COALESCE(MAX(weight), 1.0) AS row_weight,
+                  MAX(compliance_score)       AS self_score
            FROM responses
            WHERE cycle_id = $1 AND status = 'submitted'
-           GROUP BY question_id, bu_code
+           GROUP BY question_id, bu_code, material_risk
          ),
          consolidated AS (
+           -- Consolidated validation score: weight each validation row by its own
+           -- per-(BU, material_risk) weight from responses.
            SELECT v.question_id,
                   ROUND(
-                    SUM(v.validation_score * COALESCE(w.weight, 1.0))
-                    / NULLIF(SUM(CASE WHEN v.validation_score IS NOT NULL THEN COALESCE(w.weight, 1.0) ELSE 0 END), 0)
+                    SUM(v.validation_score * rw.row_weight)
+                    / NULLIF(SUM(CASE WHEN v.validation_score IS NOT NULL THEN rw.row_weight ELSE 0 END), 0)
                   , 2) AS consolidated_score
            FROM validations v
-           JOIN questions q ON q.id = v.question_id
-           LEFT JOIN ccl_item_weights w ON w.item_number = q.item_number AND w.bu_code = v.bu_code
+           JOIN response_weights rw
+             ON rw.question_id = v.question_id
+            AND rw.bu_code     = v.bu_code
+            AND rw.material_risk IS NOT DISTINCT FROM v.material_risk
            WHERE v.cycle_id = $1
            GROUP BY v.question_id
          )
@@ -300,6 +311,7 @@ router.get(
            v.id                            AS validation_id,
            v.question_id,
            v.bu_code,
+           v.material_risk,
            v.status,
            v.validation_score,
            q.item_number,
@@ -307,19 +319,21 @@ router.get(
            q.requirement,
            q.bcbs_principle_name,
            q.bcbs_principle_number,
-           bs.self_score,
-           COALESCE(w.weight, 1.0)  AS weight,
+           rw.self_score,
+           rw.row_weight                   AS weight,
            ru.bu_name,
            c.consolidated_score
          FROM validations v
          JOIN question_status qs  ON qs.question_id = v.question_id
          JOIN questions q         ON q.id = v.question_id
-         LEFT JOIN bu_self_score bs ON bs.question_id = v.question_id AND bs.bu_code = v.bu_code
-         LEFT JOIN ccl_item_weights w ON w.item_number = q.item_number AND w.bu_code = v.bu_code
+         LEFT JOIN response_weights rw
+           ON rw.question_id   = v.question_id
+          AND rw.bu_code       = v.bu_code
+          AND rw.material_risk IS NOT DISTINCT FROM v.material_risk
          LEFT JOIN respondent_units ru ON ru.bu_code = v.bu_code
          JOIN consolidated c       ON c.question_id = v.question_id
          WHERE v.cycle_id = $1
-         ORDER BY q.item_number, v.bu_code`,
+         ORDER BY q.item_number, v.bu_code, v.material_risk`,
         [cycleId]
       );
       res.json(result.rows);

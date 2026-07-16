@@ -25,6 +25,8 @@ export default function CycleList({ currentUser }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingCycle, setDeletingCycle] = useState<Cycle | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [closingCycle, setClosingCycle] = useState<Cycle | null>(null);
+  const [closing, setClosing] = useState(false);
   const [comments, setComments] = useState<Record<number, CycleComment[]>>({});
   const [commentInput, setCommentInput] = useState<Record<number, string>>({});
   const [postingComment, setPostingComment] = useState<number | null>(null);
@@ -469,8 +471,8 @@ export default function CycleList({ currentUser }: Props) {
 
                       {/* Validator: close a distributed cycle */}
                       {c.status === 'distributed' && role === 'Validator' && (
-                        <button className="btn danger" onClick={() => handleAction(c.id, 'close')} disabled={!!pendingAction}>
-                          {pendingAction?.cycleId === c.id && pendingAction?.action === 'close' ? 'Closing…' : 'Close'}
+                        <button className="btn danger" onClick={() => { setActionError(null); setClosingCycle(c); }} disabled={!!pendingAction}>
+                          Close Cycle
                         </button>
                       )}
 
@@ -686,6 +688,50 @@ export default function CycleList({ currentUser }: Props) {
                 {deleting ? 'Deleting…' : 'Delete Cycle'}
               </button>
               <button className="btn" onClick={() => { setDeletingCycle(null); setActionError(null); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Cycle Confirmation Modal (Validator only) */}
+      {closingCycle && (
+        <div className="modal-backdrop" onClick={() => { if (!closing) setClosingCycle(null); }}>
+          <div className="modal" style={{ padding: 24, minWidth: 400 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ margin: '0 0 12px', color: 'var(--danger)' }}>Close Cycle</h2>
+            <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+              You are about to close <strong>{closingCycle.name} ({closingCycle.year})</strong>.
+            </p>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)' }}>
+              Any responses still awaiting self-assessment, validations pending review, or items
+              pending Senior Validator approval will be <strong style={{ color: 'var(--danger)' }}>cancelled</strong>.
+              This action cannot be undone.
+            </p>
+            {actionError && (
+              <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>{actionError}</div>
+            )}
+            <div className="actions">
+              <button
+                className="btn danger"
+                disabled={closing}
+                onClick={async () => {
+                  setClosing(true);
+                  setActionError(null);
+                  try {
+                    await api.put(`/cycles/${closingCycle.id}/close`);
+                    setClosingCycle(null);
+                    await load();
+                  } catch (e) {
+                    setActionError(e instanceof Error ? e.message : 'Failed to close cycle');
+                  } finally {
+                    setClosing(false);
+                  }
+                }}
+              >
+                {closing ? 'Closing…' : 'Yes, Close Cycle'}
+              </button>
+              <button className="btn" onClick={() => { setClosingCycle(null); setActionError(null); }} disabled={closing}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>

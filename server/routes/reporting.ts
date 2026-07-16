@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { query } from '../db';
+import * as XLSX from 'xlsx';
 
 const router = Router();
 
@@ -103,9 +104,9 @@ router.get(
          )
          SELECT
            q.thematic_area,
-           ROUND(AVG(pqb.compliance_score), 2)                                                                                                                                         AS avg_compliance_score,
-           ROUND(SUM(pqb.weighted_compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0), 2)                                                                          AS consolidated_compliance_score,
-           ROUND(SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0), 2) AS avg_validation_score,
+           ROUND(AVG(pqb.compliance_score)::numeric, 2)                                                                                                                                         AS avg_compliance_score,
+           ROUND((SUM(pqb.weighted_compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0))::numeric, 2)                                                                          AS consolidated_compliance_score,
+           ROUND((SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
            COUNT(DISTINCT pqb.question_id)                                                                                                                                             AS response_count
          FROM per_question_bu pqb
          JOIN questions q ON q.id = pqb.question_id
@@ -138,8 +139,8 @@ router.get(
          SELECT
            q.thematic_area,
            pqb.bu_code,
-           ROUND(SUM(pqb.compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0), 2)                                                                                  AS avg_compliance_score,
-           ROUND(SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0), 2) AS avg_validation_score,
+           ROUND((SUM(pqb.compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0))::numeric, 2)                                                                                  AS avg_compliance_score,
+           ROUND((SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
            COUNT(DISTINCT pqb.question_id)                                                                                                                                             AS response_count
          FROM per_question_bu pqb
          JOIN questions q ON q.id = pqb.question_id
@@ -171,15 +172,15 @@ router.get(
            GROUP BY r.question_id, r.bu_code
          )
          SELECT
-           TRIM(s.value)                                                                                                                                                                    AS bcbs_principle_name,
-           ROUND(SUM(pqb.compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0), 2)                                                                                  AS avg_compliance_score,
-           ROUND(SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0), 2) AS avg_validation_score,
-           COUNT(pqb.question_id)                                                                                                                                                      AS response_count
+           TRIM(s)                                                                                                                                                                          AS bcbs_principle_name,
+           ROUND((SUM(pqb.compliance_score * pqb.total_weight) / NULLIF(SUM(pqb.total_weight), 0))::numeric, 2)                                                                          AS avg_compliance_score,
+           ROUND((SUM(pqb.validation_score * pqb.total_weight) / NULLIF(SUM(CASE WHEN pqb.validation_score IS NOT NULL THEN pqb.total_weight ELSE 0 END), 0))::numeric, 2)             AS avg_validation_score,
+           COUNT(pqb.question_id)                                                                                                                                                          AS response_count
          FROM per_question_bu pqb
          JOIN questions q ON q.id = pqb.question_id
-         CROSS APPLY STRING_SPLIT(q.bcbs_principle_name, '|') AS s
-         GROUP BY TRIM(s.value)
-         ORDER BY CASE WHEN MIN(q.bcbs_principle_number) IS NULL THEN 1 ELSE 0 END, MIN(q.bcbs_principle_number), TRIM(s.value)`,
+         CROSS JOIN LATERAL unnest(string_to_array(q.bcbs_principle_name, '|')) AS s
+         GROUP BY TRIM(s)
+         ORDER BY CASE WHEN MIN(q.bcbs_principle_number) IS NULL THEN 1 ELSE 0 END, MIN(q.bcbs_principle_number), TRIM(s)`,
         [cycleId]
       );
 
@@ -210,8 +211,8 @@ router.get(
          )
          SELECT
            bu_code,
-           ROUND(SUM(compliance_score * comp_weight) / NULLIF(SUM(comp_weight), 0), 2)                                                                                   AS avg_compliance_score,
-           ROUND(SUM(validation_score * comp_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN comp_weight ELSE 0 END), 0), 2) AS avg_validation_score,
+           ROUND((SUM(compliance_score * comp_weight) / NULLIF(SUM(comp_weight), 0))::numeric, 2)                                                                                   AS avg_compliance_score,
+           ROUND((SUM(validation_score * comp_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN comp_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
            SUM(r_count)                                                                                                                                                   AS response_count,
            SUM(r_submitted)                                                                                                                                               AS submitted_count,
            SUM(has_validation)                                                                                                                                            AS validated_count
@@ -247,8 +248,8 @@ router.get(
          )
          SELECT
            material_risk,
-           ROUND(SUM(compliance_score * total_weight) / NULLIF(SUM(total_weight), 0), 2)                                                                                      AS avg_compliance_score,
-           ROUND(SUM(validation_score * total_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN total_weight ELSE 0 END), 0), 2) AS avg_validation_score,
+           ROUND((SUM(compliance_score * total_weight) / NULLIF(SUM(total_weight), 0))::numeric, 2)                                                                                      AS avg_compliance_score,
+           ROUND((SUM(validation_score * total_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN total_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
            COUNT(DISTINCT question_id)                                                                                                                                         AS response_count
          FROM per_question_bu
          GROUP BY material_risk
@@ -269,7 +270,7 @@ router.get(
            v.question_id,
            q.item_number,
            q.thematic_area,
-           ROUND(SUM(r.compliance_score * COALESCE(r.weight, 1.0)) / NULLIF(SUM(COALESCE(r.weight, 1.0)), 0), 2) AS avg_compliance_score,
+           ROUND((SUM(r.compliance_score * COALESCE(r.weight, 1.0)) / NULLIF(SUM(COALESCE(r.weight, 1.0)), 0))::numeric, 2) AS avg_compliance_score,
            v.validation_score                                                                                       AS validation_score,
            v.status                                                                                                        AS validation_status
          FROM validations v
@@ -345,6 +346,96 @@ router.get(
   }
 );
 
+// GET /api/reporting/cycle/:cycleId/export/excel — download xlsx for a closed cycle
+router.get(
+  '/api/reporting/cycle/:cycleId/export/excel',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { cycleId } = req.params;
+
+      // Fetch cycle name + year for the filename
+      const cycleRow = await query<{ name: string; year: string; status: string }>(
+        `SELECT name, year, status FROM questionnaire_cycles WHERE id = $1`,
+        [cycleId]
+      );
+      if (!cycleRow.rows.length) {
+        res.status(404).json({ error: 'Cycle not found' });
+        return;
+      }
+      const cycle = cycleRow.rows[0];
+
+      // ── Single sheet: one row per closed validation (question × BU) ───
+      const rows = await query<{
+        bu_code: string;
+        display_name: string;
+        item_number: string;
+        thematic_area: string;
+        description: string;
+        material_risk: string | null;
+        validation_score: string | null;
+      }>(
+        `SELECT
+           v.bu_code,
+           COALESCE(u.display_name, v.bu_code)                                    AS display_name,
+           q.item_number::text,
+           q.thematic_area,
+           q.requirement                                                           AS description,
+           CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END AS material_risk,
+           v.validation_score::text
+         FROM validations v
+         JOIN questions q ON q.id = v.question_id
+         LEFT JOIN responses r
+           ON r.cycle_id = v.cycle_id AND r.question_id = v.question_id AND r.bu_code = v.bu_code AND r.status = 'submitted'
+         LEFT JOIN users u
+           ON u.role = 'Responder' AND u.unit_codes ? v.bu_code
+         WHERE v.cycle_id = $1 AND v.status = 'closed'
+         ORDER BY v.bu_code, q.item_number`,
+        [cycleId]
+      );
+
+      const SCORE_LABEL: Record<number, string> = {
+        1: 'Non-compliant',
+        2: 'Partially compliant',
+        3: 'Largely compliant',
+        4: 'Fully compliant',
+      };
+      const scoreLabel = (v: string | null): string => {
+        if (v === null || v === undefined || v === '') return '';
+        const n = parseFloat(v);
+        return isNaN(n) ? v : `${SCORE_LABEL[Math.round(n)] ?? n}`;
+      };
+
+      // Build workbook
+      const wb = XLSX.utils.book_new();
+
+      const sheetData = [
+        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'Description', 'Material Risk', 'Validation Score', 'Score Label'],
+        ...rows.rows.map(r => [
+          r.bu_code,
+          r.display_name,
+          r.item_number,
+          r.thematic_area,
+          r.description,
+          r.material_risk ?? '',
+          r.validation_score != null ? parseFloat(r.validation_score) : '',
+          scoreLabel(r.validation_score),
+        ]),
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
+      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 60 }, { wch: 20 }, { wch: 18 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Validation Scores');
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      const safeName = cycle.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="CCL_Validation_Scores_${safeName}_${cycle.year}.xlsx"`);
+      res.send(buf);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // GET /api/reporting/admin/analytics — cross-cycle analytics (Admin only)
 router.get(
   '/api/reporting/admin/analytics',
@@ -377,11 +468,11 @@ router.get(
           `SELECT
              qc.id, qc.name, qc.year,
              qc.distributed_at, qc.closed_at,
-             ROUND(AVG(CASE WHEN v.validation_score IS NOT NULL THEN CAST(v.validation_score AS float) END), 2)                                                                                                          AS avg_val_score,
-             ROUND(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN r.compliance_score * COALESCE(r.weight, 1.0) END) / NULLIF(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN COALESCE(r.weight, 1.0) END), 0), 2) AS avg_comp_score,
+             ROUND(AVG(CASE WHEN v.validation_score IS NOT NULL THEN CAST(v.validation_score AS float) END)::numeric, 2)                                                                                                          AS avg_val_score,
+             ROUND((SUM(CASE WHEN r.compliance_score IS NOT NULL THEN r.compliance_score * COALESCE(r.weight, 1.0) END) / NULLIF(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN COALESCE(r.weight, 1.0) END), 0))::numeric, 2) AS avg_comp_score,
              COUNT(DISTINCT CASE WHEN v.status = 'closed' THEN v.id END)                        AS closed_validations,
              COUNT(DISTINCT CASE WHEN r.status = 'submitted' THEN r.id END)                     AS submitted_responses,
-             ROUND(DATEDIFF(second, qc.distributed_at, qc.closed_at) / 86400.0, 1)          AS cycle_duration_days,
+             ROUND(EXTRACT(EPOCH FROM (qc.closed_at - qc.distributed_at)) / 86400.0, 1)       AS cycle_duration_days,
              COUNT(DISTINCT r.bu_code)                                                       AS bu_count
            FROM questionnaire_cycles qc
            LEFT JOIN validations v ON v.cycle_id = qc.id
@@ -400,25 +491,25 @@ router.get(
              r.bu_code,
              COUNT(*)                                                                               AS total_assigned,
              COUNT(CASE WHEN r.status = 'submitted' THEN 1 END)                                        AS submitted,
-             ROUND(CAST(COUNT(CASE WHEN r.status = 'submitted' THEN 1 END) AS float) / NULLIF(COUNT(*), 0) * 100, 1) AS submission_pct,
-             ROUND(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN r.compliance_score * COALESCE(r.weight, 1.0) END) / NULLIF(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN COALESCE(r.weight, 1.0) END), 0), 2) AS avg_score
+             ROUND((CAST(COUNT(CASE WHEN r.status = 'submitted' THEN 1 END) AS float) / NULLIF(COUNT(*), 0) * 100)::numeric, 1) AS submission_pct,
+             ROUND((SUM(CASE WHEN r.compliance_score IS NOT NULL THEN r.compliance_score * COALESCE(r.weight, 1.0) END) / NULLIF(SUM(CASE WHEN r.compliance_score IS NOT NULL THEN COALESCE(r.weight, 1.0) END), 0))::numeric, 2) AS avg_score
            FROM responses r
            JOIN questionnaire_cycles qc ON qc.id = r.cycle_id
            WHERE qc.status = 'closed'${yearFilter}
            GROUP BY r.bu_code
-           ORDER BY ROUND(CAST(COUNT(CASE WHEN r.status = 'submitted' THEN 1 END) AS float) / NULLIF(COUNT(*), 0) * 100, 1) DESC`
+           ORDER BY ROUND((CAST(COUNT(CASE WHEN r.status = 'submitted' THEN 1 END) AS float) / NULLIF(COUNT(*), 0) * 100)::numeric, 1) DESC`
         ),
 
         // c. Monthly submissions (filtered by year)
         query<{ month: string; submitted_count: string; avg_score: string | null }>(
           `SELECT
-             FORMAT(submitted_at, 'yyyy-MM') AS month,
+             TO_CHAR(submitted_at, 'YYYY-MM') AS month,
              COUNT(*)                                          AS submitted_count,
-             ROUND(AVG(CAST(compliance_score AS float)), 2)                  AS avg_score
+             ROUND(AVG(CAST(compliance_score AS float))::numeric, 2) AS avg_score
            FROM responses
-           WHERE status = 'submitted' AND submitted_at IS NOT NULL${yearParam ? ` AND YEAR(submitted_at) = ${yearParam}` : ''}
-           GROUP BY FORMAT(submitted_at, 'yyyy-MM')
-           ORDER BY FORMAT(submitted_at, 'yyyy-MM')`
+           WHERE status = 'submitted' AND submitted_at IS NOT NULL${yearParam ? ` AND EXTRACT(YEAR FROM submitted_at) = ${yearParam}` : ''}
+           GROUP BY TO_CHAR(submitted_at, 'YYYY-MM')
+           ORDER BY TO_CHAR(submitted_at, 'YYYY-MM')`
         ),
 
         // d. Validation score distribution (filtered by year)

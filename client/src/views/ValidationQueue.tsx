@@ -265,18 +265,24 @@ export default function ValidationQueue() {
                           {v.item_number ?? '—'}
                         </td>
                         <td>
-                          {v.bu_code ? (
-                            <span style={{
-                              fontSize: 12, fontWeight: 700,
-                              padding: '3px 8px', borderRadius: 4,
-                              background: 'var(--accent)18', color: 'var(--accent)',
-                              border: '1px solid var(--accent)44',
-                            }}>
-                              {buName(v.bu_code)}
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>—</span>
-                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {v.bu_code ? (
+                              <span style={{
+                                fontSize: 12, fontWeight: 700,
+                                padding: '3px 8px', borderRadius: 4,
+                                background: 'var(--accent)18', color: 'var(--accent)',
+                                border: '1px solid var(--accent)44',
+                                alignSelf: 'flex-start',
+                              }}>
+                                {buName(v.bu_code)}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>—</span>
+                            )}
+                            {v.material_risk && (
+                              <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>{v.material_risk}</span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div style={{ fontSize: 13, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -574,18 +580,24 @@ export default function ValidationQueue() {
                             {v.item_number ?? '—'}
                           </td>
                           <td>
-                            {v.bu_code ? (
-                              <span style={{
-                                fontSize: 12, fontWeight: 700,
-                                padding: '3px 8px', borderRadius: 4,
-                                background: 'var(--accent)18', color: 'var(--accent)',
-                                border: '1px solid var(--accent)44',
-                              }}>
-                                {buName(v.bu_code)}
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>—</span>
-                            )}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {v.bu_code ? (
+                                <span style={{
+                                  fontSize: 12, fontWeight: 700,
+                                  padding: '3px 8px', borderRadius: 4,
+                                  background: 'var(--accent)18', color: 'var(--accent)',
+                                  border: '1px solid var(--accent)44',
+                                  alignSelf: 'flex-start',
+                                }}>
+                                  {buName(v.bu_code)}
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>—</span>
+                              )}
+                              {v.material_risk && (
+                                <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>{v.material_risk}</span>
+                              )}
+                            </div>
                           </td>
                           <td className="small" style={{ color: 'var(--muted)' }}>{v.thematic_area ?? '—'}</td>
                           <td>

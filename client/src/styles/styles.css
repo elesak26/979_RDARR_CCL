@@ -284,12 +284,12 @@ select option{
   font-weight:500;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.btn:hover{background: var(--panel2); border-color: var(--muted);}
+.btn:not(:disabled):hover{background: var(--panel2); border-color: var(--muted);}
 .btn.primary{border-color: var(--accent); background: var(--accent-light); color: var(--accent-dark);}
-.btn.primary:hover{background: var(--accent); color: #fff;}
+.btn.primary:not(:disabled):hover{background: var(--accent); color: #fff;}
 .btn.danger{border-color: var(--danger); background: rgba(220,53,69,.08); color: var(--danger);}
-.btn.danger:hover{background: var(--danger); color: #fff;}
-.btn:disabled{opacity:.5; cursor:not-allowed}
+.btn.danger:not(:disabled):hover{background: var(--danger); color: #fff;}
+.btn:disabled{opacity:.5; cursor:not-allowed; pointer-events:none}
 .hr{height:1px;background:var(--line); margin:12px 0}
 .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
 .drawer-backdrop{position:fixed; inset:0; background: rgba(0,0,0,.45); display:flex; justify-content:flex-end; z-index:30;}

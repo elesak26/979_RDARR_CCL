@@ -3,11 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Cycle } from '../types';
 import { scoreColor, SCORE_LABELS } from '../utils/scores';
+import WorkflowBadge from '../components/common/WorkflowBadge';
 
 interface OverviewRow {
   validation_id: number;
   question_id: number;
   bu_code: string;
+  material_risk: string | null;
   status: string;
   validation_score: number | null;
   item_number: number;
@@ -55,7 +57,6 @@ export default function ValidationOverviewDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-
   const load = useCallback(async () => {
     if (!cycleId || !questionId) return;
     setLoading(true);
@@ -79,7 +80,6 @@ export default function ValidationOverviewDetail() {
   }, [cycleId, questionId]);
 
   useEffect(() => { load(); }, [load]);
-
 
   if (loading) return <div className="small" style={{ padding: 24 }}>Loading…</div>;
   if (error) return (
@@ -149,21 +149,29 @@ export default function ValidationOverviewDetail() {
               <th style={{ width: 170, textAlign: 'center' }}>Validation Score</th>
               <th style={{ width: 80, textAlign: 'center' }}>Weight</th>
               <th style={{ width: 130, textAlign: 'center' }}>Status</th>
-              <th style={{ width: 130, textAlign: 'center' }}>Details</th>
+              <th style={{ width: 90, textAlign: 'center' }}>Details</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(row => (
-              <tr key={row.bu_code}>
+              <tr key={`${row.bu_code}-${row.material_risk ?? ''}`}>
                 <td>
-                  <span style={{
-                    fontSize: 12, fontWeight: 700,
-                    padding: '3px 8px', borderRadius: 4,
-                    background: 'var(--accent)18', color: 'var(--accent)',
-                    border: '1px solid var(--accent)44',
-                  }}>
-                    {row.bu_name ?? row.bu_code}
-                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <span style={{
+                      fontSize: 12, fontWeight: 700,
+                      padding: '3px 8px', borderRadius: 4,
+                      background: 'var(--accent)18', color: 'var(--accent)',
+                      border: '1px solid var(--accent)44',
+                      alignSelf: 'flex-start',
+                    }}>
+                      {row.bu_name ?? row.bu_code}
+                    </span>
+                    {row.material_risk && (
+                      <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
+                        {row.material_risk}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td style={{ textAlign: 'center' }}>
                   {row.self_score !== null ? (
@@ -183,27 +191,15 @@ export default function ValidationOverviewDetail() {
                   {(row.weight * 100).toFixed(1)}%
                 </td>
                 <td style={{ textAlign: 'center' }}>
-                  {row.status === 'closed' ? (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      background: '#2f9e4418', border: '1px solid #2f9e4455',
-                      borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700, color: '#2f9e44',
-                    }}>✓ Approved</span>
-                  ) : (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      background: '#f08c0018', border: '1px solid #f08c0055',
-                      borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700, color: '#f08c00',
-                    }}>Pending</span>
-                  )}
+                  <WorkflowBadge status={row.status} size="sm" />
                 </td>
                 <td style={{ textAlign: 'center' }}>
                   <button
                     className="btn"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    style={{ fontSize: 12, padding: '3px 10px' }}
                     onClick={() => navigate(`/validation/${row.validation_id}`, { state: { cycleId: Number(cycleId) } })}
                   >
-                    Further Details
+                    Details
                   </button>
                 </td>
               </tr>
@@ -223,6 +219,7 @@ export default function ValidationOverviewDetail() {
               <td style={{ textAlign: 'center', fontWeight: 700, fontSize: 13 }}>
                 100%
               </td>
+              <td />
               <td />
             </tr>
           </tbody>

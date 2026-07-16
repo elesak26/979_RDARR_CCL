@@ -45,7 +45,7 @@ async function resolveUser(id: string): Promise<AuthUser | null> {
 
 async function firstAdmin(): Promise<AuthUser | null> {
   const result = await query<UserRow>(
-    "SELECT TOP 1 id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = 1"
+    "SELECT id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
   );
   return normalizeUser(result.rows[0]);
 }
@@ -138,13 +138,9 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     if (userId) {
       try {
         const user = await resolveUser(userId);
-        if (user) {
-          if (user.is_active === false) {
-            res.status(403).json({ error: 'Account is disabled. Contact your administrator.' });
-            return;
-          }
+        if (user && user.is_active !== false) {
           req.user = user;
-          await recordLogin(req, user);
+          recordLogin(req, user).catch(() => {});
           return next();
         }
       } catch (err) {
@@ -155,7 +151,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       const adminUser = await firstAdmin();
       if (adminUser) {
         req.user = adminUser;
-        await recordLogin(req, adminUser);
+        recordLogin(req, adminUser).catch(() => {});
         return next();
       }
     } catch (err) {
@@ -194,7 +190,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
           return;
         }
         req.user = user;
-        await recordLogin(req, user);
+        recordLogin(req, user).catch(() => {});
         return next();
       }
     } catch (err) {

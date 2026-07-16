@@ -10,7 +10,6 @@ DO $seed$ BEGIN
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-902', 'Model Validators', 'Responder', '["902"]', '902', true);
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-905', 'Enterprise Data, Risk & Insights Solutions', 'Responder', '["997"]', '997', true);
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-908', 'Risk Function (908)', 'Responder', '["908"]', '908', true);
-  INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-956', 'Finance Function (956)', 'Responder', '["956"]', '956', false);
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-961', 'Group Financial & Liquidity Risk Management', 'Responder', '["961","961-Market","961-Liquidity","961-IRRBB"]', '961', true);
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-966', 'Data Governance Unit', 'Responder', '["966"]', '966', true);
   INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code, is_active) VALUES ('bu-974', 'Internal Control Function', 'Responder', '["974"]', '974', true);

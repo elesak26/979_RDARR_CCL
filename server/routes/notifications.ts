@@ -12,7 +12,7 @@ router.get('/api/notifications', async (req: Request, res: Response, next: NextF
     const result = await query(
       `SELECT id, title, body, cycle_id, link, is_read, created_at
        FROM notifications
-       WHERE user_id = $1 AND is_read = 0
+       WHERE user_id = $1 AND is_read = false
        ORDER BY created_at DESC`,
       [userId]
     );
@@ -29,7 +29,7 @@ router.put('/api/notifications/:id/read', async (req: Request, res: Response, ne
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
     await query(
-      `UPDATE notifications SET is_read = 1 WHERE id = $1 AND user_id = $2`,
+      `UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2`,
       [req.params.id, userId]
     );
     res.json({ ok: true });
@@ -45,7 +45,7 @@ router.put('/api/notifications/read-all', async (req: Request, res: Response, ne
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
     await query(
-      `UPDATE notifications SET is_read = 1 WHERE user_id = $1 AND is_read = 0`,
+      `UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false`,
       [userId]
     );
     res.json({ ok: true });

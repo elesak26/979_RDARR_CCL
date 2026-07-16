@@ -271,7 +271,7 @@ export default function App() {
       {/* Toolbar */}
       <div className="toolbar">
         <img src="/nbg-logo.svg" alt="NBG" className="toolbar__logo" />
-        <span className="toolbar__title">NBG CCL — RDARR Compliance Checklist</span>
+        <span className="toolbar__title">RVMT — RDARR Validation Management Tool</span>
         <span className="toolbar__spacer" />
 
         {/* Dev user switcher */}

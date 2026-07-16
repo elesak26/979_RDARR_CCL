@@ -18,7 +18,7 @@ router.get('/api/users', async (_req: Request, res: Response, next: NextFunction
       `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
               u.is_active, u.created_at,
               (SELECT lh.logged_in_at FROM login_history lh
-               WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC) AS last_login_at
+               WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC LIMIT 1) AS last_login_at
        FROM users u ORDER BY u.display_name`
     );
     res.json(result.rows.map(parseUnitCodes));

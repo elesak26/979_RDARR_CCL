@@ -78,6 +78,13 @@ app.use(reportingRouter);
 app.use(auditRouter);
 app.use(notificationsRouter);
 
+// ── Serve built client (production / single-server mode) ─────────────────────
+const clientDist = path.resolve(__dirname, '../client/dist');
+app.use(express.static(clientDist, { index: false }));
+app.get(/^(?!\/api|\/auth|\/uploads).*/, (_req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
+
 // ── Error handler ────────────────────────────────────────────────────────────
 app.use(errorHandler);
 
@@ -90,7 +97,7 @@ app.listen(PORT, () => {
 
   logger.info(
     { port: PORT, database },
-    'NBG RDARR Compliance Checklist server started'
+    'RVMT — RDARR Validation Management Tool server started'
   );
 });
 

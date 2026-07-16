@@ -81,8 +81,8 @@ export default function MyAssignments({ currentUser }: Props) {
     : (selectedSubUnit || currentUser.primary_unit_code || '');
   const activeBuCode = fetchBuCode;
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showFullSpinner = false) => {
+    if (showFullSpinner) setLoading(true);
     setError(null);
     try {
       const cycles = await api.get<Cycle[]>('/cycles');
@@ -92,7 +92,6 @@ export default function MyAssignments({ currentUser }: Props) {
 
       if (allActive.length === 0 || !activeBuCode) {
         setResponses([]);
-        setLoading(false);
         return;
       }
 
@@ -117,11 +116,11 @@ export default function MyAssignments({ currentUser }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
-      setLoading(false);
+      if (showFullSpinner) setLoading(false);
     }
   }, [activeBuCode]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(true); }, [load]);
 
   function setDraft(responseId: number, patch: Partial<ItemDraft>) {
     setDrafts(prev => ({ ...prev, [responseId]: { ...prev[responseId], ...patch } }));
@@ -191,18 +190,19 @@ export default function MyAssignments({ currentUser }: Props) {
     if (!selectedCycleId) return;
     setSubmitAllBusy(true);
     setSubmitError(null);
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 30_000);
     try {
       const pending = responses.filter(
         r => r.cycle_id === selectedCycleId && (r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned')
       );
-      for (const r of pending) {
-        const d = drafts[r.id];
-        await api.put(`/cycles/${r.cycle_id}/responses/${r.id}`, {
-          compliance_score: d?.score ?? null,
-          comments: d?.comments ?? null,
-        });
-        await api.put(`/cycles/${r.cycle_id}/responses/${r.id}/submit`);
-      }
+      await api.post(`/cycles/${selectedCycleId}/responses/submit-all`, {
+        items: pending.map(r => ({
+          id: r.id,
+          compliance_score: drafts[r.id]?.score ?? null,
+          comments: drafts[r.id]?.comments ?? null,
+        })),
+      }, abort.signal);
       setSubmittedCycles(prev => new Set([...prev, selectedCycleId]));
       await load();
 
@@ -217,8 +217,13 @@ export default function MyAssignments({ currentUser }: Props) {
         setStatusFilter('all');
       }
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : 'Submit failed');
+      if ((e as Error)?.name === 'AbortError') {
+        setSubmitError('The request timed out. Please check your connection and try again.');
+      } else {
+        setSubmitError(e instanceof Error ? e.message : 'Submit failed');
+      }
     } finally {
+      clearTimeout(timer);
       setSubmitAllBusy(false);
     }
   }

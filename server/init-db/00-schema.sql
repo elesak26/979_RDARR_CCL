@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS responses (
   material_risk    text,
   weight           numeric(10,6),
   CONSTRAINT responses_compliance_score_check CHECK (compliance_score >= 1 AND compliance_score <= 4),
-  CONSTRAINT responses_status_check CHECK (status IN ('draft','in_progress','submitted','returned')),
+  CONSTRAINT responses_status_check CHECK (status IN ('draft','in_progress','submitted','returned','cancelled')),
   CONSTRAINT responses_cycle_question_bu_risk_key
     UNIQUE NULLS NOT DISTINCT (cycle_id, question_id, bu_code, material_risk)
 );
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS validations (
   bu_code                  text,
   CONSTRAINT validations_validation_score_check CHECK (validation_score >= 1 AND validation_score <= 4),
   CONSTRAINT validations_status_check
-    CHECK (status IN ('pending','in_review','returned','rejected','pending_approval','closed')),
+    CHECK (status IN ('pending','in_review','returned','rejected','pending_approval','closed','cancelled')),
   CONSTRAINT validations_cycle_question_bu_key
     UNIQUE NULLS NOT DISTINCT (cycle_id, question_id, bu_code)
 );

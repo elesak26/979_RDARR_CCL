@@ -25,9 +25,13 @@ interface ChecklistRow {
  * Returns one ChecklistEntry per token.
  */
 function parseColumnK(raw: string): ChecklistEntry[] {
+  // Treat both '|' and bare newlines as token separators.
+  // Some Excel cells omit the '|' before a line break between two entries,
+  // so we normalize every newline to '|' first, then split on '|'.
   return raw
+    .replace(/[\r\n]+/g, '|')
     .split('|')
-    .map(token => token.replace(/[\r\n]/g, ' ').trim())
+    .map(token => token.trim())
     .filter(Boolean)
     .map(token => {
       // Split on ':' — first segment is BU code, last is weight%, middle is risk label
@@ -114,6 +118,44 @@ const router = Router();
 // BU 961 is split into three material-risk sub-entities for validation purposes.
 // These codes are the canonical keys used in ccl_item_weights and respondent_units.
 const BU_961_SPLIT = ['961-IRRBB', '961-Liquidity', '961-Market'];
+
+// Normalises a raw BU code from column K to the canonical bu_code used in respondent_units.
+// 006 → 006-956 (Finance Reporting combined entity); 961 is split by material risk downstream.
+function normaliseBuCode(raw: string): string {
+  if (raw === '006') return '006-956';
+  return raw;
+}
+
+/**
+ * Parse column K of the checklist and compute per-(item_number, bu_code) summed weights.
+ * BU 961 is resolved to 961-Market / 961-IRRBB / 961-Liquidity based on material risk label.
+ * BU 006 is mapped to 006-956.
+ * Multiple material-risk rows for the same BU on the same item are summed.
+ */
+function parseWeightsFromChecklist(filePath: string): { item_number: number; bu_code: string; weight: number }[] {
+  const rows = parseChecklistXlsx(filePath);
+  // accumulate weights: key = `item_number|bu_code`
+  const acc = new Map<string, { item_number: number; bu_code: string; weight: number }>();
+  for (const { itemNumber, entries } of rows) {
+    for (const { buCode, materialRisk, weight } of entries) {
+      if (weight === null || weight <= 0) continue;
+      let resolvedBu: string;
+      if (buCode === '961' && materialRisk && MATERIAL_RISK_TO_961_BU[materialRisk]) {
+        resolvedBu = MATERIAL_RISK_TO_961_BU[materialRisk];
+      } else {
+        resolvedBu = normaliseBuCode(buCode);
+      }
+      const key = `${itemNumber}|${resolvedBu}`;
+      const existing = acc.get(key);
+      if (existing) {
+        existing.weight = Math.min(1, existing.weight + weight);
+      } else {
+        acc.set(key, { item_number: itemNumber, bu_code: resolvedBu, weight });
+      }
+    }
+  }
+  return [...acc.values()];
+}
 
 // Maps a material_risk label (from XLSX column K) to its 961 sub-entity bu_code.
 const MATERIAL_RISK_TO_961_BU: Record<string, string> = {
@@ -234,7 +276,7 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
       return;
     }
     const result = await query(
-      `INSERT INTO questionnaire_cycles (name, year, description, created_by) VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO questionnaire_cycles (name, year, description, created_by) VALUES ($1, $2, $3, $4) RETURNING id, name, year, status, description, created_by, created_at`,
       [name, year, description?.trim() || null, req.user?.id ?? null]
     );
     logAudit({ action: 'cycle_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(result.rows[0].id), cycle_id: result.rows[0].id as number, details: { name: result.rows[0].name, year: result.rows[0].year } });
@@ -495,6 +537,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
 });
 
 // PUT /api/cycles/:id/close — distributed → closed (Validator)
+// Force-closes the cycle: any in-flight responses or validations are cancelled.
 router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: NextFunction) => {
   if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
@@ -503,7 +546,6 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
   try {
     const { id } = req.params;
 
-    // Verify cycle exists and is distributed
     const cycleCheck = await query(
       `SELECT id FROM questionnaire_cycles WHERE id = $1 AND status = 'distributed'`,
       [id]
@@ -513,40 +555,49 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
       return;
     }
 
-    // Block if any response is not yet submitted
-    const pendingResponses = await query<{ cnt: string }>(
-      `SELECT COUNT(*) AS cnt FROM responses
-       WHERE cycle_id = $1 AND status NOT IN ('submitted')`,
+    // Cancel responses still in progress (not yet submitted)
+    const cancelledResponses = await query<{ cnt: string }>(
+      `WITH cancelled AS (
+         UPDATE responses
+         SET status = 'cancelled', updated_at = NOW()
+         WHERE cycle_id = $1 AND status NOT IN ('submitted', 'cancelled')
+         RETURNING id
+       ) SELECT COUNT(*) AS cnt FROM cancelled`,
       [id]
     );
-    if (parseInt(pendingResponses.rows[0].cnt, 10) > 0) {
-      res.status(400).json({
-        error: `Cannot close: ${pendingResponses.rows[0].cnt} response(s) have not been submitted by respondents yet.`,
-      });
-      return;
-    }
 
-    // Block if any validation is not yet closed
-    const pendingValidations = await query<{ cnt: string }>(
-      `SELECT COUNT(*) AS cnt FROM validations
-       WHERE cycle_id = $1 AND status <> 'closed'`,
+    // Cancel validations not yet fully approved (not closed)
+    const cancelledValidations = await query<{ cnt: string }>(
+      `WITH cancelled AS (
+         UPDATE validations
+         SET status = 'cancelled', updated_at = NOW()
+         WHERE cycle_id = $1 AND status NOT IN ('closed', 'cancelled')
+         RETURNING id
+       ) SELECT COUNT(*) AS cnt FROM cancelled`,
       [id]
     );
-    if (parseInt(pendingValidations.rows[0].cnt, 10) > 0) {
-      res.status(400).json({
-        error: `Cannot close: ${pendingValidations.rows[0].cnt} validation item(s) have not been fully reviewed and approved by the Senior Validator yet.`,
-      });
-      return;
-    }
 
     const result = await query(
       `UPDATE questionnaire_cycles
-       SET status = 'closed', closed_at = NOW(), updated_at = NOW() WHERE id = $1
+       SET status = 'closed', closed_at = NOW(), updated_at = NOW()
+       WHERE id = $1
        RETURNING *`,
       [id]
     );
-    logAudit({ action: 'cycle_closed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: {} });
-    res.json(result.rows[0]);
+
+    const nResponses  = parseInt(cancelledResponses.rows[0].cnt, 10);
+    const nValidations = parseInt(cancelledValidations.rows[0].cnt, 10);
+    logAudit({
+      action: 'cycle_closed',
+      actor_id: req.user?.id,
+      actor_name: req.user?.display_name,
+      actor_role: req.user?.role,
+      entity_type: 'cycle',
+      entity_id: String(id),
+      cycle_id: parseInt(String(id), 10),
+      details: { cancelled_responses: nResponses, cancelled_validations: nValidations },
+    });
+    res.json({ ...result.rows[0], cancelled_responses: nResponses, cancelled_validations: nValidations });
   } catch (err) {
     next(err);
   }
@@ -622,6 +673,24 @@ router.post(
         res.status(404).json({ error: 'Cycle not found' });
         return;
       }
+      // Parse column K weights and upsert into ccl_item_weights
+      try {
+        const weights = parseWeightsFromChecklist(path.join(UPLOAD_DIR, req.file.filename));
+        if (weights.length > 0) {
+          await query(
+            `INSERT INTO ccl_item_weights (item_number, bu_code, weight, updated_at)
+             SELECT j.item_number, j.bu_code, j.weight, NOW()
+             FROM json_to_recordset($1::json) AS j(item_number int, bu_code text, weight numeric)
+             JOIN respondent_units ru ON ru.bu_code = j.bu_code
+             ON CONFLICT (item_number, bu_code) DO UPDATE SET weight = EXCLUDED.weight, updated_at = NOW()`,
+            [JSON.stringify(weights)]
+          );
+        }
+      } catch (weightErr) {
+        // Non-fatal — log but don't block the upload response
+        console.error('ccl_item_weights upsert failed:', weightErr);
+      }
+
       logAudit({ action: 'checklist_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { file_name: req.file.originalname } });
       res.json({ ok: true, checklist_file: req.file.filename, original_name: req.file.originalname });
     } catch (err) {
