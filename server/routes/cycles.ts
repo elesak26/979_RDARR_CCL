@@ -441,7 +441,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
               const resolvedBuCode =
                 buCode === '961' && materialRisk && MATERIAL_RISK_TO_961_BU[materialRisk]
                   ? MATERIAL_RISK_TO_961_BU[materialRisk]
-                  : buCode;
+                  : normaliseBuCode(buCode);
               rows.push({ question_id: qInfo.id, bu_code: resolvedBuCode, material_risk: materialRisk, weight });
             }
           }
