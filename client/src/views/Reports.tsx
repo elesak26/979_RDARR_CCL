@@ -656,12 +656,18 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     return Math.min(100, Math.round((summary.counts.total_validated / total) * 100));
   })();
 
+  const radarHasValidation = (summary?.scores_by_thematic_area ?? []).some(r => r.avg_validation_score !== null);
   const radarRows = (summary?.scores_by_thematic_area ?? [])
-    .filter(r => r.avg_validation_score !== null);
+    .filter(r => (radarHasValidation
+      ? r.avg_validation_score
+      : (r.consolidated_compliance_score ?? r.avg_compliance_score)) !== null);
   const radarData = radarRows.map((row, i) => ({
     area: String(i + 1),
     fullArea: row.thematic_area.replace(/^\d+\.\s*/, '').trim(),
-    score: Number(Number(row.avg_validation_score).toFixed(2)),
+    score: Number(Number(radarHasValidation
+      ? row.avg_validation_score
+      : (row.consolidated_compliance_score ?? row.avg_compliance_score)
+    ).toFixed(2)),
     fullMark: 4,
   }));
 
@@ -975,15 +981,14 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 };
               });
 
-            if (slopeRows.length === 0) return null;
-
-            const quadrantCounts = {
+            const hasSlopeData = slopeRows.length > 0;
+            const quadrantCounts = hasSlopeData ? {
               overconfident: slopeRows.filter(d => d.category === 'overconfident').length,
               undervalued:   slopeRows.filter(d => d.category === 'undervalued').length,
-            };
-            const avgSelf = slopeRows.reduce((s, r) => s + r.selfScore, 0) / slopeRows.length;
-            const avgVal  = slopeRows.reduce((s, r) => s + r.validationScore, 0) / slopeRows.length;
-            const avgGap  = avgSelf - avgVal;
+            } : { overconfident: 0, undervalued: 0 };
+            const avgSelf = hasSlopeData ? slopeRows.reduce((s, r) => s + r.selfScore, 0) / slopeRows.length : null;
+            const avgVal  = hasSlopeData ? slopeRows.reduce((s, r) => s + r.validationScore, 0) / slopeRows.length : null;
+            const avgGap  = avgSelf !== null && avgVal !== null ? avgSelf - avgVal : null;
 
             return (
               <div style={{
@@ -997,147 +1002,173 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 }}>
                   <span style={{ fontSize: 15 }}>🎯</span>
                   <strong style={{ fontSize: 13 }}>Consolidated Score Deviation by Thematic Area</strong>
-                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                    {([
-                      { cat: 'overconfident' as SlopeCategory, label: 'Overconfident' },
-                      { cat: 'undervalued'   as SlopeCategory, label: 'Undervalued (gap ≤ 1)' },
-                      { cat: 'aligned'       as SlopeCategory, label: 'Aligned (±0.10)' },
-                    ] as const).map(({ cat, label }) => (
-                      <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <div style={{ width: 10, height: 10, borderRadius: '50%', background: SLOPE_COLORS[cat] }} />
-                        <span style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: '1px solid var(--line)' }}>
-                  {[
-                    { label: 'Overconfident', sub: 'Self − Validation > 1', count: quadrantCounts.overconfident, color: SLOPE_COLORS.overconfident, bg: 'rgba(224,123,0,.07)' },
-                    { label: 'Undervalued',   sub: 'Self − Validation ≤ 1', count: quadrantCounts.undervalued,   color: SLOPE_COLORS.undervalued,   bg: 'rgba(0,123,133,.07)' },
-                  ].map(({ label, sub, count, color, bg }) => (
-                    <div key={label} style={{ padding: '10px 16px', background: bg, borderRight: '1px solid var(--line)', textAlign: 'center' }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{count}</div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color, marginTop: 2 }}>{label}</div>
-                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>
-                    </div>
-                  ))}
-                  <div style={{ padding: '10px 16px', textAlign: 'center', background: 'var(--panel2)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</div>
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
-                      <div style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgSelf.toFixed(2)}</div>
-                        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Self</div>
-                      </div>
-                      <div style={{ width: 1, background: 'var(--line)', alignSelf: 'stretch' }} />
-                      <div style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgVal.toFixed(2)}</div>
-                        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Validation</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: Math.abs(avgGap) <= 0.10 ? 'var(--muted)' : avgGap > 0 ? SLOPE_COLORS.overconfident : SLOPE_COLORS.undervalued }}>
-                      {Math.abs(avgGap) <= 0.10 ? '≈ 0' : (avgGap > 0 ? '+' : '') + avgGap.toFixed(2)} gap
-                    </div>
-                  </div>
-                </div>
-                <div style={{ padding: '16px 24px 8px', overflowX: 'auto' }}>
-                  <SlopeChart rows={slopeRows} />
-                </div>
-                <div style={{ padding: '4px 20px 12px', fontSize: 10, color: 'var(--muted)' }}>
-                  Left column = Self Assessment score · Right column = Validation score · Gap label = Self − Validation · Line slope and colour indicate direction and category.
-                </div>
-
-                {/* ── Material Risk compact table ── */}
-                {(() => {
-                  const mrRows = summary.scores_by_material_risk ?? [];
-                  if (mrRows.length === 0) return null;
-                  const RISK_PALETTE: Record<string, { accent: string; bg: string }> = {
-                    'Market Risk':      { accent: '#e07b00', bg: 'rgba(224,123,0,.05)'  },
-                    'Liquidity Risk':   { accent: '#007b85', bg: 'rgba(0,123,133,.05)'  },
-                    'IRRBB Risk':       { accent: '#5a3ea1', bg: 'rgba(90,62,161,.05)'  },
-                    'Credit Risk':      { accent: '#c0392b', bg: 'rgba(192,57,43,.05)'  },
-                    'Operational Risk': { accent: '#2980b9', bg: 'rgba(41,128,185,.05)' },
-                    'Strategic Risk':   { accent: '#27ae60', bg: 'rgba(39,174,96,.05)'  },
-                  };
-                  const FALLBACK = ['#c0392b', '#28a745', '#2980b9', '#8e44ad'];
-                  const riskPalette = (risk: string, idx: number) =>
-                    RISK_PALETTE[risk] ?? { accent: FALLBACK[idx % FALLBACK.length], bg: `${FALLBACK[idx % FALLBACK.length]}0d` };
-                  const overallMrComp = (() => {
-                    const vals = mrRows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
-                    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-                  })();
-                  const overallMrVal = (() => {
-                    const vals = mrRows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
-                    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-                  })();
-                  const InlineScore = ({ value, accent }: { value: number | null; accent: string }) => {
-                    if (value === null) return <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>;
-                    const col = scoreColor(Math.round(value));
-                    const pct = ((value - 1) / 3) * 100;
-                    return (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: col, minWidth: 34 }}>{value.toFixed(2)}</span>
-                        <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--line)', overflow: 'hidden', minWidth: 60 }}>
-                          <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 3 }} />
+                  {!hasSlopeData && (
+                    <span style={{ fontSize: 11, color: 'var(--warn)', fontWeight: 600, background: 'rgba(255,193,7,.12)', border: '1px solid var(--warn)', borderRadius: 999, padding: '2px 10px' }}>
+                      Awaiting validation scores
+                    </span>
+                  )}
+                  {hasSlopeData && (
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                      {([
+                        { cat: 'overconfident' as SlopeCategory, label: 'Overconfident' },
+                        { cat: 'undervalued'   as SlopeCategory, label: 'Undervalued (gap ≤ 1)' },
+                        { cat: 'aligned'       as SlopeCategory, label: 'Aligned (±0.10)' },
+                      ] as const).map(({ cat, label }) => (
+                        <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <div style={{ width: 10, height: 10, borderRadius: '50%', background: SLOPE_COLORS[cat] }} />
+                          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</span>
                         </div>
-                        <span style={{ fontSize: 10, color: col, fontWeight: 600, minWidth: 72 }}>{SCORE_LABELS[Math.round(value)] ?? ''}</span>
-                      </div>
-                    );
-                  };
-                  const th: React.CSSProperties = {
-                    padding: '7px 14px', fontSize: 10, fontWeight: 700,
-                    color: 'var(--muted)', textTransform: 'uppercase',
-                    letterSpacing: '.05em', borderBottom: '2px solid var(--line)',
-                    background: 'var(--panel2)', textAlign: 'left',
-                  };
-                  return (
-                    <div style={{ borderTop: '2px solid var(--line)' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr>
-                            <th style={{ ...th, width: 160 }}>Material Risk</th>
-                            <th style={{ ...th }}>Self Assessment</th>
-                            <th style={{ ...th }}>Validation</th>
-                            <th style={{ ...th, width: 110 }}>Gap</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mrRows.map((r, i) => {
-                            const p = riskPalette(r.material_risk, i);
-                            const gap = r.avg_compliance_score !== null && r.avg_validation_score !== null
-                              ? r.avg_compliance_score - r.avg_validation_score : null;
-                            const gapColor = gap === null || Math.abs(gap) <= 0.10 ? 'var(--muted)'
-                              : gap > 0 ? '#e07b00' : '#007b85';
-                            const gapLabel = gap === null ? '—'
-                              : Math.abs(gap) <= 0.10 ? '≈ aligned'
-                              : (gap > 0 ? '+' : '') + gap.toFixed(2);
-                            return (
-                              <tr key={r.material_risk} style={{ background: p.bg, borderBottom: '1px solid var(--line)' }}>
-                                <td style={{ padding: '9px 14px', borderLeft: `4px solid ${p.accent}` }}>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: p.accent }}>{r.material_risk}</span>
-                                </td>
-                                <td style={{ padding: '9px 14px' }}><InlineScore value={r.avg_compliance_score} accent={p.accent} /></td>
-                                <td style={{ padding: '9px 14px' }}><InlineScore value={r.avg_validation_score} accent={p.accent} /></td>
-                                <td style={{ padding: '9px 14px' }}>
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: gapColor, background: `${gapColor}15`, border: `1px solid ${gapColor}40`, borderRadius: 20, padding: '2px 9px', whiteSpace: 'nowrap' }}>
-                                    {gapLabel}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          <tr style={{ background: 'var(--panel2)', borderTop: '2px solid var(--line)' }}>
-                            <td style={{ padding: '9px 14px', borderLeft: '4px solid var(--line)' }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</span>
-                            </td>
-                            <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrComp} accent="var(--muted)" /></td>
-                            <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrVal} accent="var(--muted)" /></td>
-                            <td />
-                          </tr>
-                        </tbody>
-                      </table>
+                      ))}
                     </div>
-                  );
-                })()}
+                  )}
+                </div>
+                {!hasSlopeData ? (
+                  <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                    The deviation chart will appear once Validators have submitted validation scores for at least one thematic area.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderBottom: '1px solid var(--line)' }}>
+                      {[
+                        { label: 'Overconfident', sub: 'Self − Validation > 1', count: quadrantCounts.overconfident, color: SLOPE_COLORS.overconfident, bg: 'rgba(224,123,0,.07)' },
+                        { label: 'Undervalued',   sub: 'Self − Validation ≤ 1', count: quadrantCounts.undervalued,   color: SLOPE_COLORS.undervalued,   bg: 'rgba(0,123,133,.07)' },
+                      ].map(({ label, sub, count, color, bg }) => (
+                        <div key={label} style={{ padding: '10px 16px', background: bg, borderRight: '1px solid var(--line)', textAlign: 'center' }}>
+                          <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{count}</div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color, marginTop: 2 }}>{label}</div>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>
+                        </div>
+                      ))}
+                      <div style={{ padding: '10px 16px', textAlign: 'center', background: 'var(--panel2)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</div>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgSelf!.toFixed(2)}</div>
+                            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Self</div>
+                          </div>
+                          <div style={{ width: 1, background: 'var(--line)', alignSelf: 'stretch' }} />
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgVal!.toFixed(2)}</div>
+                            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Validation</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: avgGap === null || Math.abs(avgGap) <= 0.10 ? 'var(--muted)' : avgGap > 0 ? SLOPE_COLORS.overconfident : SLOPE_COLORS.undervalued }}>
+                          {avgGap === null || Math.abs(avgGap) <= 0.10 ? '≈ 0' : (avgGap > 0 ? '+' : '') + avgGap.toFixed(2)} gap
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ padding: '16px 24px 8px', overflowX: 'auto' }}>
+                      <SlopeChart rows={slopeRows} />
+                    </div>
+                    <div style={{ padding: '4px 20px 12px', fontSize: 10, color: 'var(--muted)' }}>
+                      Left column = Self Assessment score · Right column = Validation score · Gap label = Self − Validation · Line slope and colour indicate direction and category.
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ── Material Risk compact table — Senior Validator only ── */}
+          {currentUser?.role === 'Senior Validator' && (() => {
+            const mrRows = summary.scores_by_material_risk ?? [];
+            if (mrRows.length === 0) return null;
+            const RISK_PALETTE: Record<string, { accent: string; bg: string }> = {
+              'Market Risk':      { accent: '#e07b00', bg: 'rgba(224,123,0,.05)'  },
+              'Liquidity Risk':   { accent: '#007b85', bg: 'rgba(0,123,133,.05)'  },
+              'IRRBB Risk':       { accent: '#5a3ea1', bg: 'rgba(90,62,161,.05)'  },
+              'Credit Risk':      { accent: '#c0392b', bg: 'rgba(192,57,43,.05)'  },
+              'Operational Risk': { accent: '#2980b9', bg: 'rgba(41,128,185,.05)' },
+              'Strategic Risk':   { accent: '#27ae60', bg: 'rgba(39,174,96,.05)'  },
+            };
+            const FALLBACK = ['#c0392b', '#28a745', '#2980b9', '#8e44ad'];
+            const riskPalette = (risk: string, idx: number) =>
+              RISK_PALETTE[risk] ?? { accent: FALLBACK[idx % FALLBACK.length], bg: `${FALLBACK[idx % FALLBACK.length]}0d` };
+            const overallMrComp = (() => {
+              const vals = mrRows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
+              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+            })();
+            const overallMrVal = (() => {
+              const vals = mrRows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
+              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+            })();
+            const InlineScore = ({ value, accent }: { value: number | null; accent: string }) => {
+              if (value === null) return <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>;
+              const col = scoreColor(Math.round(value));
+              const pct = ((value - 1) / 3) * 100;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: col, minWidth: 34 }}>{value.toFixed(2)}</span>
+                  <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--line)', overflow: 'hidden', minWidth: 60 }}>
+                    <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 3 }} />
+                  </div>
+                  <span style={{ fontSize: 10, color: col, fontWeight: 600, minWidth: 72 }}>{SCORE_LABELS[Math.round(value)] ?? ''}</span>
+                </div>
+              );
+            };
+            const th: React.CSSProperties = {
+              padding: '7px 14px', fontSize: 10, fontWeight: 700,
+              color: 'var(--muted)', textTransform: 'uppercase',
+              letterSpacing: '.05em', borderBottom: '2px solid var(--line)',
+              background: 'var(--panel2)', textAlign: 'left',
+            };
+            return (
+              <div style={{
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+                marginBottom: 20, overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '12px 20px', borderBottom: '1px solid var(--line)',
+                  background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  <span style={{ fontSize: 15 }}>⚠️</span>
+                  <strong style={{ fontSize: 13 }}>Scores by Material Risk</strong>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...th, width: 160 }}>Material Risk</th>
+                      <th style={{ ...th }}>Self Assessment</th>
+                      <th style={{ ...th }}>Validation</th>
+                      <th style={{ ...th, width: 110 }}>Gap</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mrRows.map((r, i) => {
+                      const p = riskPalette(r.material_risk, i);
+                      const gap = r.avg_compliance_score !== null && r.avg_validation_score !== null
+                        ? r.avg_compliance_score - r.avg_validation_score : null;
+                      const gapColor = gap === null || Math.abs(gap) <= 0.10 ? 'var(--muted)'
+                        : gap > 0 ? '#e07b00' : '#007b85';
+                      const gapLabel = gap === null ? '—'
+                        : Math.abs(gap) <= 0.10 ? '≈ aligned'
+                        : (gap > 0 ? '+' : '') + gap.toFixed(2);
+                      return (
+                        <tr key={r.material_risk} style={{ background: p.bg, borderBottom: '1px solid var(--line)' }}>
+                          <td style={{ padding: '9px 14px', borderLeft: `4px solid ${p.accent}` }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: p.accent }}>{r.material_risk}</span>
+                          </td>
+                          <td style={{ padding: '9px 14px' }}><InlineScore value={r.avg_compliance_score} accent={p.accent} /></td>
+                          <td style={{ padding: '9px 14px' }}><InlineScore value={r.avg_validation_score} accent={p.accent} /></td>
+                          <td style={{ padding: '9px 14px' }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: gapColor, background: `${gapColor}15`, border: `1px solid ${gapColor}40`, borderRadius: 20, padding: '2px 9px', whiteSpace: 'nowrap' }}>
+                              {gapLabel}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr style={{ background: 'var(--panel2)', borderTop: '2px solid var(--line)' }}>
+                      <td style={{ padding: '9px 14px', borderLeft: '4px solid var(--line)' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</span>
+                      </td>
+                      <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrComp} accent="var(--muted)" /></td>
+                      <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrVal} accent="var(--muted)" /></td>
+                      <td />
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             );
           })()}
@@ -1283,7 +1314,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 10,
                 }}>
                   <span style={{ fontSize: 15 }}>🕸️</span>
-                  <strong style={{ fontSize: 13 }}>Avg Validation Score by Thematic Area</strong>
+                  <strong style={{ fontSize: 13 }}>{radarHasValidation ? 'Avg Validation Score by Thematic Area' : 'Avg Self Assessment Score by Thematic Area'}</strong>
+                  {!radarHasValidation && <span className="small" style={{ color: 'var(--warn)' }}>validation pending</span>}
                 </div>
                 <div style={{ padding: '16px 8px 0' }}>
                   <ResponsiveContainer width="100%" height={280}>
@@ -1294,7 +1326,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         tick={{ fontSize: 13, fill: 'var(--text)', fontWeight: 700 }}
                       />
                       <Radar
-                        name="Avg Validation"
+                        name={radarHasValidation ? 'Avg Validation' : 'Avg Self Assessment'}
                         dataKey="score"
                         stroke="var(--accent)"
                         fill="var(--accent)"

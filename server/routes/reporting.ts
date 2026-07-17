@@ -45,15 +45,9 @@ router.get(
            )
            SELECT
              (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)  AS total_questions,
-             (SELECT COUNT(DISTINCT qa.question_id)
-              FROM question_applicability qa
-              WHERE qa.cycle_id = $1
-              AND NOT EXISTS (
-                SELECT 1 FROM question_applicability qa2
-                LEFT JOIN responses r ON r.cycle_id=qa2.cycle_id AND r.question_id=qa2.question_id AND r.bu_code=qa2.bu_code
-                WHERE qa2.cycle_id=qa.cycle_id AND qa2.question_id=qa.question_id
-                  AND (r.id IS NULL OR r.status <> 'submitted')
-              ))                                                                                    AS total_submitted,
+             (SELECT COUNT(DISTINCT r.question_id)
+              FROM responses r
+              WHERE r.cycle_id = $1 AND r.status = 'submitted')                                   AS total_submitted,
              (SELECT COUNT(*) FROM validated_questions)                                            AS total_validated,
              (SELECT COUNT(DISTINCT question_id) FROM validations WHERE cycle_id = $1 AND status = 'closed') AS total_closed,
              (SELECT COUNT(DISTINCT qa.question_id)

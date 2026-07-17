@@ -178,11 +178,12 @@ CREATE TABLE IF NOT EXISTS validations (
   senior_validated_at      timestamptz,
   senior_rejection_comment text,
   bu_code                  text,
+  material_risk            text,
   CONSTRAINT validations_validation_score_check CHECK (validation_score >= 1 AND validation_score <= 4),
   CONSTRAINT validations_status_check
     CHECK (status IN ('pending','in_review','returned','rejected','pending_approval','closed','cancelled')),
-  CONSTRAINT validations_cycle_question_bu_key
-    UNIQUE NULLS NOT DISTINCT (cycle_id, question_id, bu_code)
+  CONSTRAINT validations_cycle_question_bu_risk_key
+    UNIQUE NULLS NOT DISTINCT (cycle_id, question_id, bu_code, material_risk)
 );
 
 -- ---------- ccl_item_weights ----------
