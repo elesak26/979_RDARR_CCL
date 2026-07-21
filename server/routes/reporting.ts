@@ -104,6 +104,7 @@ router.get(
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+             AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted'${byAreaBuFilter}
            GROUP BY r.question_id, r.bu_code
          )
@@ -138,6 +139,7 @@ router.get(
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+             AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted'
            GROUP BY r.question_id, r.bu_code
          )
@@ -172,6 +174,7 @@ router.get(
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+             AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted'
            GROUP BY r.question_id, r.bu_code
          )
@@ -261,6 +264,7 @@ router.get(
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+             AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted' AND r.material_risk IS NOT NULL
            GROUP BY CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END, r.bu_code
          )

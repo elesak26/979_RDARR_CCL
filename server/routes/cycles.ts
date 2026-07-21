@@ -169,7 +169,7 @@ const MATERIAL_RISK_TO_961_BU: Record<string, string> = {
 // BU 961 is listed as three separate entries (one per material risk) rather than bare '961'.
 const QUESTION_BU_MAP: Record<number, string[]> = {
    1: ['966', '007-52'],
-   2: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956', '974'],
+   2: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956'],
    3: ['966'],
    4: ['966'],
    5: ['966'],
@@ -612,7 +612,7 @@ router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextF
   try {
     const { id } = req.params;
     const result = await query(
-      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published')`,
+      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published') RETURNING id, name`,
       [id]
     );
     if (result.rows.length === 0) {
