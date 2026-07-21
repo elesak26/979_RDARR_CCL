@@ -136,6 +136,7 @@ interface CycleSummary {
     total_actioned: number;
     total_qa_rows: number;
     total_respondents: number;
+    total_submitted_questions: number;
   };
   scores_by_bcbs_principle: BcbsPrincipleRow[];
   scores_by_thematic_area: ThematicAreaRow[];
@@ -162,6 +163,7 @@ interface BcbsPrincipleRow {
 
 interface BURow {
   bu_code: string;
+  material_risk?: string | null;
   avg_compliance_score: number | null;
   avg_validation_score: number | null;
   response_count: number;
@@ -406,6 +408,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [error, setError] = useState<string | null>(null);
   const [adminTab, setAdminTab] = useState<'analytics' | 'audit'>('analytics');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [expandedBus, setExpandedBus] = useState<Set<string>>(new Set());
 
   // Audit log state (Admin only)
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
@@ -646,7 +649,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   // ── Derived data ────────────────────────────────────────────────────────────
 
   const submissionPct = summary
-    ? Math.round((summary.counts.total_submitted / Math.max(summary.counts.total_questions, 1)) * 100)
+    ? Math.round((summary.counts.total_submitted_questions / Math.max(summary.counts.total_questions, 1)) * 100)
     : 0;
 
   const validationPct = (() => {
@@ -910,7 +913,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <CompletionRing
                   pct={submissionPct}
                   label="Submission"
-                  sublabel={`${summary.counts.total_submitted} / ${summary.counts.total_questions} questions`}
+                  sublabel={`${summary.counts.total_submitted_questions} / ${summary.counts.total_questions} questions`}
                 />
                 <CompletionRing
                   pct={validationPct}
@@ -926,7 +929,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', flex: 1 }}>
                 {[
                   { label: 'Total Questions', value: summary.counts.total_questions, color: 'var(--muted)', icon: '📋' },
-                  { label: 'Sent for Evaluation', value: summary.counts.total_submitted, color: 'var(--accent)', icon: '📨' },
+                  { label: 'Sent for Evaluation', value: summary.counts.total_submitted_questions, color: 'var(--accent)', icon: '📨' },
                   { label: 'Awaiting SV Approval', value: summary.counts.total_validated, color: 'var(--warn)', icon: '🔍' },
                   { label: 'Closed', value: summary.counts.total_closed_questions, color: 'var(--ok)', icon: '✅' },
                 ].map(card => (
@@ -963,8 +966,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </div>
           )}
 
-          {/* ── Score Deviation chart (slope) — Senior Validator only ── */}
-          {currentUser?.role === 'Senior Validator' && (() => {
+          {/* ── Score Deviation chart (slope) — SV always; all roles on closed cycle ── */}
+          {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const source = summary.scores_by_thematic_area;
             const slopeRows: SlopeRow[] = source
               .filter(r => (r.consolidated_compliance_score ?? r.avg_compliance_score) !== null && r.avg_validation_score !== null)
@@ -1069,8 +1072,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             );
           })()}
 
-          {/* ── Material Risk compact table — Senior Validator only ── */}
-          {currentUser?.role === 'Senior Validator' && (() => {
+          {/* ── Material Risk compact table — SV always; all roles on closed cycle ── */}
+          {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const mrRows = summary.scores_by_material_risk ?? [];
             if (mrRows.length === 0) return null;
             const RISK_PALETTE: Record<string, { accent: string; bg: string }> = {
@@ -1173,8 +1176,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             );
           })()}
 
-          {/* ── Summary of Consolidated Scores by Thematic Area — Senior Validator only ── */}
-          {currentUser?.role === 'Senior Validator' && (() => {
+          {/* ── Summary of Consolidated Scores by Thematic Area — SV always; all roles on closed cycle ── */}
+          {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const rows = summary.scores_by_thematic_area;
             const compValues = rows.map(r => r.consolidated_compliance_score ?? r.avg_compliance_score).filter((v): v is number => v !== null);
             const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
@@ -1248,8 +1251,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
           {/* ── Charts row ── */}
           <div style={{ display: 'grid', gridTemplateColumns: radarData.length > 2 ? '1fr 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
-            {/* Bar chart — BCBS 239 Principle (Senior Validator only) */}
-            {currentUser?.role === 'Senior Validator' && barChartData.length > 0 && (
+            {/* Bar chart — BCBS 239 Principle (SV always; all roles on closed cycle) */}
+            {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && barChartData.length > 0 && (
               <div style={{
                 background: 'var(--panel)', border: '1px solid var(--line)',
                 borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)', overflow: 'hidden',
@@ -1363,147 +1366,226 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           </div>
 
           {/* ── Scores by BU (non-Admin only) ── */}
-          {currentUser?.role !== 'Admin' && <div style={{
-            background: 'var(--panel)', border: '1px solid var(--line)',
-            borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
-            marginBottom: 20, overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '12px 20px', borderBottom: '1px solid var(--line)',
-              background: 'var(--panel2)', display: 'flex', alignItems: 'center', gap: 10,
-            }}>
-              <span style={{ fontSize: 15 }}>🏢</span>
-              <strong style={{ fontSize: 13 }}>
-                {(selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator') ? 'Business-RDARR Validation: Assessment Alignment' : 'Respondent-RDARR Validation: Assessment Alignment'}
-              </strong>
-              <span className="small" style={{ marginLeft: 'auto' }}>{summary.scores_by_bu.length} Respondents</span>
-            </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Respondent</th>
-                  {(selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator') ? (
-                    <>
-                      <th style={{ width: 220 }}>Avg Self Assessment Score</th>
-                      <th style={{ width: 220 }}>Avg Consolidated Validation</th>
-                    </>
-                  ) : (
-                    <>
-                      <th style={{ width: 200 }}>Submission Progress</th>
-                      <th style={{ width: 100, textAlign: 'right' }}>Submitted</th>
-                      <th style={{ width: 200 }}>Validation Progress</th>
-                      <th style={{ width: 100, textAlign: 'right' }}>In Validation</th>
-                      <th style={{ width: 110, textAlign: 'center' }}>Status</th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {summary.scores_by_bu.length === 0 && (
-                  <tr><td colSpan={selectedCycle?.status === 'closed' ? 3 : 6} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
-                )}
-                {(() => {
-                  // Merge 006 + 956 into one Finance Reporting row.
-                  // If the DB returns them as separate codes, merge them.
-                  // If the DB already returns a combined '006-956' row, use it directly (renamed to '006').
-                  const FINANCE_CODES = new Set(['006', '956']);
-                  const separateFinanceRows = summary.scores_by_bu.filter(r => FINANCE_CODES.has(r.bu_code));
-                  const combinedFinanceRow  = summary.scores_by_bu.find(r => r.bu_code === '006-956');
-                  const financeRows = separateFinanceRows.length > 0 ? separateFinanceRows : (combinedFinanceRow ? [combinedFinanceRow] : []);
-                  const mergedFinance: BURow | null = financeRows.length > 0 ? (() => {
-                    const totalResp = financeRows.reduce((s, r) => s + r.response_count, 0);
-                    const totalSub  = financeRows.reduce((s, r) => s + r.submitted_count, 0);
-                    const totalVal  = financeRows.reduce((s, r) => s + r.validated_count, 0);
-                    const wAvgComp = financeRows.every(r => r.avg_compliance_score === null) ? null
-                      : financeRows.reduce((s, r) => s + (r.avg_compliance_score ?? 0) * r.submitted_count, 0) / Math.max(totalSub, 1);
-                    const wAvgVal  = financeRows.every(r => r.avg_validation_score === null) ? null
-                      : financeRows.reduce((s, r) => s + (r.avg_validation_score ?? 0) * r.response_count, 0) / Math.max(totalResp, 1);
-                    return { bu_code: '006', avg_compliance_score: wAvgComp, avg_validation_score: wAvgVal, response_count: totalResp, submitted_count: totalSub, validated_count: totalVal };
-                  })() : null;
-                  const displayRows: BURow[] = [
-                    ...summary.scores_by_bu.filter(r => !FINANCE_CODES.has(r.bu_code) && r.bu_code !== '006-956'),
-                    ...(mergedFinance ? [mergedFinance] : []),
-                  ].sort((a, b) => a.bu_code.localeCompare(b.bu_code));
+          {currentUser?.role !== 'Admin' && (() => {
+            const isClosedView = selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator';
+            const colSpan = isClosedView ? 3 : 6;
 
-                  return displayRows.map(row => {
-                    const subPct = row.response_count > 0
-                      ? Math.round((row.submitted_count / row.response_count) * 100)
-                      : 0;
-                    const valPct = row.response_count > 0
-                      ? Math.round((row.validated_count / row.response_count) * 100)
-                      : 0;
-                    const allSubmitted = subPct === 100 && row.response_count > 0;
-                    const allValidated = valPct === 100 && row.response_count > 0;
+            // Sort all rows, then group by bu_code
+            const sorted: BURow[] = [...summary.scores_by_bu].sort((a, b) => {
+              const cmp = a.bu_code.localeCompare(b.bu_code);
+              if (cmp !== 0) return cmp;
+              return (a.material_risk ?? '').localeCompare(b.material_risk ?? '');
+            });
 
-                    const statusBadge = (() => {
-                      if (allValidated) return { label: '✓ Validated', bg: 'rgba(40,167,69,.12)', color: 'var(--ok)' };
-                      if (row.validated_count > 0) return { label: 'In Validation', bg: 'rgba(0,123,133,.10)', color: 'var(--accent)' };
-                      if (allSubmitted) return { label: '✓ Submitted', bg: 'rgba(40,167,69,.08)', color: 'var(--ok)' };
-                      if (row.submitted_count > 0) return { label: 'In Progress', bg: 'rgba(255,193,7,.12)', color: '#856404' };
-                      return { label: 'Pending', bg: 'transparent', color: 'var(--muted)' };
-                    })();
+            // Group: bu_code → rows
+            const groups = new Map<string, BURow[]>();
+            for (const row of sorted) {
+              const existing = groups.get(row.bu_code) ?? [];
+              existing.push(row);
+              groups.set(row.bu_code, existing);
+            }
 
-                    const ProgressBar = ({ pct, color }: { pct: number; color: string }) => (
+            const ProgressBar = ({ pct, color }: { pct: number; color: string }) => (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, height: 7, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width .4s ease' }} />
+                </div>
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{pct}%</span>
+              </div>
+            );
+
+            const renderDataCells = (row: BURow) => {
+              if (isClosedView) {
+                return (
+                  <>
+                    <td><ScoreBar value={row.avg_compliance_score} /></td>
+                    <td><ScoreBar value={row.avg_validation_score} /></td>
+                  </>
+                );
+              }
+              const subPct = row.response_count > 0 ? Math.round((row.submitted_count / row.response_count) * 100) : 0;
+              const valPct = row.response_count > 0 ? Math.round((row.validated_count / row.response_count) * 100) : 0;
+              const allSubmitted = subPct === 100 && row.response_count > 0;
+              const allValidated = valPct === 100 && row.response_count > 0;
+              const statusBadge = (() => {
+                if (allValidated) return { label: '✓ Validated', bg: 'rgba(40,167,69,.12)', color: 'var(--ok)' };
+                if (row.validated_count > 0) return { label: 'In Validation', bg: 'rgba(0,123,133,.10)', color: 'var(--accent)' };
+                if (allSubmitted) return { label: '✓ Submitted', bg: 'rgba(40,167,69,.08)', color: 'var(--ok)' };
+                if (row.submitted_count > 0) return { label: 'In Progress', bg: 'rgba(255,193,7,.12)', color: '#856404' };
+                return { label: 'Pending', bg: 'transparent', color: 'var(--muted)' };
+              })();
+              return (
+                <>
+                  <td><ProgressBar pct={subPct} color={completionColor(subPct)} /></td>
+                  <td style={{ textAlign: 'right', fontSize: 13 }}>
+                    <span style={{ color: allSubmitted ? 'var(--ok)' : 'var(--text)', fontWeight: allSubmitted ? 700 : 400 }}>{row.submitted_count}</span>
+                    <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
+                  </td>
+                  <td><ProgressBar pct={valPct} color="var(--accent)" /></td>
+                  <td style={{ textAlign: 'right', fontSize: 13 }}>
+                    <span style={{ color: allValidated ? 'var(--ok)' : 'var(--text)', fontWeight: allValidated ? 700 : 400 }}>{row.validated_count}</span>
+                    <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: statusBadge.bg, color: statusBadge.color }}>
+                      {statusBadge.label}
+                    </span>
+                  </td>
+                </>
+              );
+            };
+
+            const tableRows: React.ReactNode[] = [];
+            for (const [buCode, rows] of groups) {
+              const isMulti = rows.length > 1;
+              const isExpanded = expandedBus.has(buCode);
+              const baseName = buName(buCode);
+
+              if (isMulti) {
+                // Aggregate row: avg of avgs across material risks
+                const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
+                const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
+                const aggComp = compValues.length ? Number((compValues.reduce((a, b) => a + b, 0) / compValues.length).toFixed(2)) : null;
+                const aggVal  = valValues.length  ? Number((valValues.reduce((a, b)  => a + b,  0) / valValues.length).toFixed(2))  : null;
+                const aggSubmitted = rows.reduce((s, r) => s + r.submitted_count, 0);
+                const aggValidated = rows.reduce((s, r) => s + r.validated_count, 0);
+                const aggTotal     = rows.reduce((s, r) => s + r.response_count, 0);
+                const aggRow: BURow = {
+                  bu_code: buCode, material_risk: null,
+                  avg_compliance_score: aggComp, avg_validation_score: aggVal,
+                  response_count: aggTotal, submitted_count: aggSubmitted, validated_count: aggValidated,
+                };
+
+                tableRows.push(
+                  <tr key={buCode} style={{ background: isExpanded ? 'var(--accent-light)' : undefined }}>
+                    <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ flex: 1, height: 7, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width .4s ease' }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{pct}%</span>
+                        <button
+                          onClick={() => setExpandedBus(prev => {
+                            const next = new Set(prev);
+                            next.has(buCode) ? next.delete(buCode) : next.add(buCode);
+                            return next;
+                          })}
+                          style={{
+                            width: 20, height: 20, borderRadius: 4, border: '1px solid var(--accent)',
+                            background: isExpanded ? 'var(--accent)' : 'var(--panel)',
+                            color: isExpanded ? '#fff' : 'var(--accent)',
+                            fontSize: 14, lineHeight: 1, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0, fontWeight: 700, padding: 0,
+                          }}
+                          title={isExpanded ? 'Collapse material risks' : 'Expand material risks'}
+                        >
+                          {isExpanded ? '−' : '+'}
+                        </button>
+                        <span style={{
+                          display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                          background: 'var(--chip)', fontFamily: 'monospace', fontSize: 12,
+                          fontWeight: 700, border: '1px solid var(--line)', color: 'var(--text)',
+                        }}>
+                          {baseName}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--muted)' }}>{rows.length} material risks</span>
                       </div>
-                    );
+                    </td>
+                    {renderDataCells(aggRow)}
+                  </tr>
+                );
 
-                    return (
-                      <tr key={row.bu_code}>
-                        <td>
+                if (isExpanded) {
+                  for (const subRow of rows) {
+                    tableRows.push(
+                      <tr key={`${buCode}|${subRow.material_risk}`} style={{ background: 'rgba(0,123,133,.04)' }}>
+                        <td style={{ paddingLeft: 44 }}>
                           <span style={{
-                            display: 'inline-block', padding: '2px 8px',
-                            borderRadius: 4, background: 'var(--chip)',
-                            fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
-                            border: '1px solid var(--line)', color: 'var(--text)',
+                            display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                            background: 'var(--panel2)', fontFamily: 'monospace', fontSize: 11,
+                            border: '1px solid var(--line)', color: 'var(--muted)',
                           }}>
-                            {row.bu_code === '006' ? 'Finance Reporting (006-956)' : buName(row.bu_code)}
+                            {subRow.material_risk}
                           </span>
                         </td>
-                        {(selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator') ? (
-                          <>
-                            <td><ScoreBar value={row.avg_compliance_score} /></td>
-                            <td><ScoreBar value={row.avg_validation_score} /></td>
-                          </>
-                        ) : (
-                          <>
-                            <td><ProgressBar pct={subPct} color={completionColor(subPct)} /></td>
-                            <td style={{ textAlign: 'right', fontSize: 13 }}>
-                              <span style={{ color: allSubmitted ? 'var(--ok)' : 'var(--text)', fontWeight: allSubmitted ? 700 : 400 }}>
-                                {row.submitted_count}
-                              </span>
-                              <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
-                            </td>
-                            <td><ProgressBar pct={valPct} color="var(--accent)" /></td>
-                            <td style={{ textAlign: 'right', fontSize: 13 }}>
-                              <span style={{ color: allValidated ? 'var(--ok)' : 'var(--text)', fontWeight: allValidated ? 700 : 400 }}>
-                                {row.validated_count}
-                              </span>
-                              <span style={{ color: 'var(--muted)' }}>/{row.response_count}</span>
-                            </td>
-                            <td style={{ textAlign: 'center' }}>
-                              <span style={{
-                                fontSize: 11, fontWeight: 700, padding: '2px 8px',
-                                borderRadius: 999,
-                                background: statusBadge.bg,
-                                color: statusBadge.color,
-                              }}>
-                                {statusBadge.label}
-                              </span>
-                            </td>
-                          </>
-                        )}
+                        {renderDataCells(subRow)}
                       </tr>
                     );
-                  });
-                })()}
-              </tbody>
-            </table>
-          </div>}
+                  }
+                }
+              } else {
+                // Single material risk — display flat as before
+                const row = rows[0];
+                const label = row.material_risk ? `${baseName} — ${row.material_risk}` : baseName;
+                tableRows.push(
+                  <tr key={buCode}>
+                    <td>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                        background: 'var(--chip)', fontFamily: 'monospace', fontSize: 12,
+                        fontWeight: 700, border: '1px solid var(--line)', color: 'var(--text)',
+                      }}>
+                        {label}
+                      </span>
+                    </td>
+                    {renderDataCells(row)}
+                  </tr>
+                );
+              }
+            }
+
+            const uniqueRespondents = groups.size;
+
+            return (
+              <div style={{
+                background: 'var(--panel)', border: '1px solid var(--line)',
+                borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
+                marginBottom: 20, overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '12px 20px', borderBottom: '1px solid var(--line)',
+                  background: 'var(--panel2)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 15 }}>🏢</span>
+                    <strong style={{ fontSize: 13 }}>
+                      {isClosedView ? 'Business-RDARR Validation: Assessment Alignment' : 'Respondent-RDARR Validation: Assessment Alignment'}
+                    </strong>
+                    <span className="small" style={{ marginLeft: 'auto' }}>{uniqueRespondents} Respondents</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 5, paddingLeft: 26 }}>
+                    {isClosedView
+                      ? 'Average self-assessment and validation scores per respondent. Respondents covering multiple material risks are shown as a single aggregated row — press + to view the breakdown by risk.'
+                      : 'Submission and validation progress per respondent. Respondents covering multiple material risks are shown as a single aggregated row — press + to view the breakdown by risk.'}
+                  </div>
+                </div>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Respondent</th>
+                      {isClosedView ? (
+                        <>
+                          <th style={{ width: 220 }}>Avg Self Assessment Score</th>
+                          <th style={{ width: 220 }}>Avg Consolidated Validation</th>
+                        </>
+                      ) : (
+                        <>
+                          <th style={{ width: 200 }}>Submission Progress</th>
+                          <th style={{ width: 100, textAlign: 'right' }}>Submitted</th>
+                          <th style={{ width: 200 }}>Validation Progress</th>
+                          <th style={{ width: 100, textAlign: 'right' }}>In Validation</th>
+                          <th style={{ width: 110, textAlign: 'center' }}>Status</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.scores_by_bu.length === 0 && (
+                      <tr><td colSpan={colSpan} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
+                    )}
+                    {tableRows}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
 
           {/* dead block removed */}
           {false && (() => {
