@@ -1370,19 +1370,29 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             const isClosedView = selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator';
             const colSpan = isClosedView ? 3 : 6;
 
-            // Sort all rows, then group by bu_code
+            // BU 961 sub-codes are treated as one respondent entity
+            const BU961 = new Set(['961-IRRBB', '961-Liquidity', '961-Market']);
+            const bu961Label = (buCode: string) => {
+              if (buCode === '961-IRRBB')     return 'IRRBB Risk';
+              if (buCode === '961-Liquidity') return 'Liquidity Risk';
+              if (buCode === '961-Market')    return 'Market Risk';
+              return buCode;
+            };
+
+            // Sort all rows, then group by bu_code (merging 961-* under '961')
             const sorted: BURow[] = [...summary.scores_by_bu].sort((a, b) => {
               const cmp = a.bu_code.localeCompare(b.bu_code);
               if (cmp !== 0) return cmp;
               return (a.material_risk ?? '').localeCompare(b.material_risk ?? '');
             });
 
-            // Group: bu_code → rows
+            // Group: canonical key → rows
             const groups = new Map<string, BURow[]>();
             for (const row of sorted) {
-              const existing = groups.get(row.bu_code) ?? [];
+              const key = BU961.has(row.bu_code) ? '961' : row.bu_code;
+              const existing = groups.get(key) ?? [];
               existing.push(row);
-              groups.set(row.bu_code, existing);
+              groups.set(key, existing);
             }
 
             const ProgressBar = ({ pct, color }: { pct: number; color: string }) => (
@@ -1436,34 +1446,39 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             };
 
             const tableRows: React.ReactNode[] = [];
-            for (const [buCode, rows] of groups) {
+            for (const [groupKey, rows] of groups) {
               const isMulti = rows.length > 1;
-              const isExpanded = expandedBus.has(buCode);
-              const baseName = buName(buCode);
+              const isExpanded = expandedBus.has(groupKey);
+              // For the 961 virtual group, use the shared name; otherwise use the actual bu_code name
+              const baseName = groupKey === '961' ? 'Grp. Financial & Liquidity Risk Mgmt.' : buName(groupKey);
+
+              // Sub-row label: for 961-* derive from bu_code; for material_risk splits use material_risk
+              const subLabel = (row: BURow) =>
+                BU961.has(row.bu_code) ? bu961Label(row.bu_code) : (row.material_risk ?? row.bu_code);
 
               if (isMulti) {
-                // Aggregate row: avg of avgs across material risks
+                // Aggregate row: simple avg of per-sub-row scores
                 const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
                 const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
                 const aggComp = compValues.length ? Number((compValues.reduce((a, b) => a + b, 0) / compValues.length).toFixed(2)) : null;
-                const aggVal  = valValues.length  ? Number((valValues.reduce((a, b)  => a + b,  0) / valValues.length).toFixed(2))  : null;
+                const aggVal  = valValues.length  ? Number((valValues.reduce((a, b) => a + b, 0)  / valValues.length).toFixed(2))  : null;
                 const aggSubmitted = rows.reduce((s, r) => s + r.submitted_count, 0);
                 const aggValidated = rows.reduce((s, r) => s + r.validated_count, 0);
                 const aggTotal     = rows.reduce((s, r) => s + r.response_count, 0);
                 const aggRow: BURow = {
-                  bu_code: buCode, material_risk: null,
+                  bu_code: groupKey, material_risk: null,
                   avg_compliance_score: aggComp, avg_validation_score: aggVal,
                   response_count: aggTotal, submitted_count: aggSubmitted, validated_count: aggValidated,
                 };
 
                 tableRows.push(
-                  <tr key={buCode} style={{ background: isExpanded ? 'var(--accent-light)' : undefined }}>
+                  <tr key={groupKey} style={{ background: isExpanded ? 'var(--accent-light)' : undefined }}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <button
                           onClick={() => setExpandedBus(prev => {
                             const next = new Set(prev);
-                            next.has(buCode) ? next.delete(buCode) : next.add(buCode);
+                            next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey);
                             return next;
                           })}
                           style={{
@@ -1474,7 +1489,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             flexShrink: 0, fontWeight: 700, padding: 0,
                           }}
-                          title={isExpanded ? 'Collapse material risks' : 'Expand material risks'}
+                          title={isExpanded ? 'Collapse' : 'Expand'}
                         >
                           {isExpanded ? '−' : '+'}
                         </button>
@@ -1495,14 +1510,14 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 if (isExpanded) {
                   for (const subRow of rows) {
                     tableRows.push(
-                      <tr key={`${buCode}|${subRow.material_risk}`} style={{ background: 'rgba(0,123,133,.04)' }}>
+                      <tr key={`${groupKey}|${subRow.bu_code}|${subRow.material_risk}`} style={{ background: 'rgba(0,123,133,.04)' }}>
                         <td style={{ paddingLeft: 44 }}>
                           <span style={{
                             display: 'inline-block', padding: '2px 8px', borderRadius: 4,
                             background: 'var(--panel2)', fontFamily: 'monospace', fontSize: 11,
                             border: '1px solid var(--line)', color: 'var(--muted)',
                           }}>
-                            {subRow.material_risk}
+                            {subLabel(subRow)}
                           </span>
                         </td>
                         {renderDataCells(subRow)}
@@ -1511,11 +1526,11 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   }
                 }
               } else {
-                // Single material risk — display flat as before
+                // Single row — display flat (no expand button)
                 const row = rows[0];
                 const label = row.material_risk ? `${baseName} — ${row.material_risk}` : baseName;
                 tableRows.push(
-                  <tr key={buCode}>
+                  <tr key={groupKey}>
                     <td>
                       <span style={{
                         display: 'inline-block', padding: '2px 8px', borderRadius: 4,
