@@ -23,6 +23,7 @@ router.get(
         total_actioned: string;
         total_qa_rows: string;
         total_respondents: string;
+        total_submitted_questions: string;
       }>(
         `WITH expected_bu AS (
              SELECT q.id AS question_id, COUNT(*) AS expected_bu_count
@@ -45,7 +46,7 @@ router.get(
            )
            SELECT
              (SELECT COUNT(DISTINCT question_id) FROM question_applicability WHERE cycle_id = $1)  AS total_questions,
-             (SELECT COUNT(DISTINCT r.question_id)
+             (SELECT COUNT(*)
               FROM responses r
               WHERE r.cycle_id = $1 AND r.status = 'submitted')                                   AS total_submitted,
              (SELECT COUNT(*) FROM validated_questions)                                            AS total_validated,
@@ -63,7 +64,17 @@ router.get(
              (SELECT COUNT(*) FROM validations WHERE cycle_id = $1)                               AS total_validations,
              (SELECT COUNT(*) FROM validations WHERE cycle_id = $1 AND status IN ('closed','rejected','returned')) AS total_actioned,
              (SELECT COUNT(*) FROM question_applicability WHERE cycle_id = $1)                    AS total_qa_rows,
-             (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)     AS total_respondents`,
+             (SELECT COUNT(DISTINCT bu_code) FROM question_applicability WHERE cycle_id = $1)     AS total_respondents,
+             (SELECT COUNT(*)
+              FROM (
+                SELECT qa.question_id
+                FROM question_applicability qa
+                LEFT JOIN responses r
+                  ON r.cycle_id = qa.cycle_id AND r.question_id = qa.question_id AND r.bu_code = qa.bu_code
+                WHERE qa.cycle_id = $1
+                GROUP BY qa.question_id
+                HAVING COUNT(DISTINCT qa.bu_code) = COUNT(DISTINCT CASE WHEN r.status = 'submitted' THEN r.bu_code END)
+              ) fully_submitted)                                                                   AS total_submitted_questions`,
         [cycleId]
       );
 
@@ -179,8 +190,11 @@ router.get(
       );
 
       // ── Scores by BU (avg compliance_score per bu_code) ──────────────────
+      // BUs 023 and 006-956 are split by material_risk so each material risk
+      // appears as a separate row (same treatment as 961-Market/Liquidity/IRRBB).
       const byBuResult = await query<{
         bu_code: string;
+        material_risk: string | null;
         avg_compliance_score: string;
         avg_validation_score: string;
         response_count: string;
@@ -190,29 +204,42 @@ router.get(
         `WITH per_question_bu AS (
            SELECT
              r.bu_code,
+             CASE WHEN r.bu_code IN ('023', '006-956') THEN r.material_risk ELSE NULL END AS material_risk,
              r.question_id,
+             -- counts from responses only (no join fan-out)
+             COUNT(r.id)                                                                     AS r_count,
+             COUNT(CASE WHEN r.status = 'submitted' THEN r.id END)                          AS r_submitted,
              SUM(CASE WHEN r.status = 'submitted' THEN r.compliance_score * COALESCE(r.weight, 1.0) END)
                / NULLIF(SUM(CASE WHEN r.status = 'submitted' THEN COALESCE(r.weight, 1.0) END), 0) AS compliance_score,
-             SUM(CASE WHEN r.status = 'submitted' THEN COALESCE(r.weight, 1.0) END)                AS comp_weight,
-             MAX(v.validation_score)                                                             AS validation_score,
-             COUNT(r.id)                                                                         AS r_count,
-             COUNT(CASE WHEN r.status = 'submitted' THEN r.id END)                                  AS r_submitted,
-             MAX(CASE WHEN v.validation_score IS NOT NULL THEN 1 ELSE 0 END) AS has_validation
+             SUM(CASE WHEN r.status = 'submitted' THEN COALESCE(r.weight, 1.0) END)         AS comp_weight
            FROM responses r
-           LEFT JOIN validations v ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
            WHERE r.cycle_id = $1
-           GROUP BY r.bu_code, r.question_id
+           GROUP BY r.bu_code,
+                    CASE WHEN r.bu_code IN ('023', '006-956') THEN r.material_risk ELSE NULL END,
+                    r.question_id
+         ),
+         per_question_val AS (
+           SELECT
+             v.bu_code,
+             v.question_id,
+             MAX(v.validation_score)                                    AS validation_score,
+             MAX(CASE WHEN v.validation_score IS NOT NULL THEN 1 ELSE 0 END) AS has_validation
+           FROM validations v
+           WHERE v.cycle_id = $1
+           GROUP BY v.bu_code, v.question_id
          )
          SELECT
-           bu_code,
-           ROUND((SUM(compliance_score * comp_weight) / NULLIF(SUM(comp_weight), 0))::numeric, 2)                                                                                   AS avg_compliance_score,
-           ROUND((SUM(validation_score * comp_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN comp_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
-           SUM(r_count)                                                                                                                                                   AS response_count,
-           SUM(r_submitted)                                                                                                                                               AS submitted_count,
-           SUM(has_validation)                                                                                                                                            AS validated_count
-         FROM per_question_bu
-         GROUP BY bu_code
-         ORDER BY bu_code`,
+           p.bu_code,
+           p.material_risk,
+           ROUND((SUM(p.compliance_score * p.comp_weight) / NULLIF(SUM(p.comp_weight), 0))::numeric, 2)                                                                         AS avg_compliance_score,
+           ROUND((SUM(pv.validation_score * p.comp_weight) / NULLIF(SUM(CASE WHEN pv.validation_score IS NOT NULL THEN p.comp_weight ELSE 0 END), 0))::numeric, 2)              AS avg_validation_score,
+           SUM(p.r_count)                                                                                                                                                         AS response_count,
+           SUM(p.r_submitted)                                                                                                                                                     AS submitted_count,
+           SUM(COALESCE(pv.has_validation, 0))                                                                                                                                    AS validated_count
+         FROM per_question_bu p
+         LEFT JOIN per_question_val pv ON pv.bu_code = p.bu_code AND pv.question_id = p.question_id
+         GROUP BY p.bu_code, p.material_risk
+         ORDER BY p.bu_code, p.material_risk NULLS FIRST`,
         [cycleId]
       );
 
@@ -223,29 +250,30 @@ router.get(
         avg_validation_score: string;
         response_count: string;
       }>(
-        `WITH per_question_bu AS (
+        `WITH per_bu AS (
+           -- One row per (material_risk, bu_code): simple average of compliance scores across all submitted items
            SELECT
              CASE TRIM(r.material_risk)
                WHEN 'IRRBB' THEN 'IRRBB Risk'
                ELSE TRIM(r.material_risk)
              END AS material_risk,
-             r.question_id,
              r.bu_code,
-             SUM(r.compliance_score * COALESCE(r.weight, 1.0)) / NULLIF(SUM(COALESCE(r.weight, 1.0)), 0) AS compliance_score,
-             SUM(COALESCE(r.weight, 1.0))                                                                   AS total_weight,
-             MAX(v.validation_score)                                                                         AS validation_score
+             AVG(r.compliance_score::float)   AS compliance_score,
+             AVG(v.validation_score::float)   AS validation_score,
+             COUNT(DISTINCT r.question_id)    AS question_count
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
            WHERE r.cycle_id = $1 AND r.status = 'submitted' AND r.material_risk IS NOT NULL
-           GROUP BY CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END, r.question_id, r.bu_code
+           GROUP BY CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END, r.bu_code
          )
          SELECT
            material_risk,
-           ROUND((SUM(compliance_score * total_weight) / NULLIF(SUM(total_weight), 0))::numeric, 2)                                                                                      AS avg_compliance_score,
-           ROUND((SUM(validation_score * total_weight) / NULLIF(SUM(CASE WHEN validation_score IS NOT NULL THEN total_weight ELSE 0 END), 0))::numeric, 2) AS avg_validation_score,
-           COUNT(DISTINCT question_id)                                                                                                                                         AS response_count
-         FROM per_question_bu
+           -- Simple average across BUs (each BU counts equally)
+           ROUND(AVG(compliance_score)::numeric, 2)                                                          AS avg_compliance_score,
+           ROUND(AVG(validation_score)::numeric, 2)                                                          AS avg_validation_score,
+           SUM(question_count)                                                                                AS response_count
+         FROM per_bu
          GROUP BY material_risk
          ORDER BY material_risk`,
         [cycleId]
@@ -290,6 +318,7 @@ router.get(
           total_actioned:         parseInt(counts.total_actioned         ?? '0', 10),
           total_qa_rows:          parseInt(counts.total_qa_rows          ?? '0', 10),
           total_respondents:      parseInt(counts.total_respondents      ?? '0', 10),
+          total_submitted_questions: parseInt(counts.total_submitted_questions ?? '0', 10),
         },
         scores_by_bcbs_principle: byBcbsResult.rows.map((r) => ({
           bcbs_principle_name:   r.bcbs_principle_name ?? null,
@@ -319,6 +348,7 @@ router.get(
         })),
         scores_by_bu: byBuResult.rows.map((r) => ({
           bu_code:              r.bu_code,
+          material_risk:        r.material_risk ?? null,
           avg_compliance_score: r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
           avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
           response_count:       parseInt(r.response_count, 10),
@@ -370,7 +400,7 @@ router.get(
         validation_score: string | null;
       }>(
         `SELECT
-           v.bu_code,
+           SPLIT_PART(v.bu_code, '-', 1)                                            AS bu_code,
            COALESCE(
              (SELECT display_name FROM users
               WHERE role = 'Responder' AND unit_codes ? v.bu_code

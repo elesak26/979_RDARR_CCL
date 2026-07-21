@@ -92,8 +92,8 @@ router.post(
 
       const result = await query(
         `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
-         RETURNING *
-         VALUES ($1, $2, $3, $4)`,
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
         [responseId, decodedName, file.filename, req.user?.display_name ?? null]
       );
       const saved = result.rows[0];
