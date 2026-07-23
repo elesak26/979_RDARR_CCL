@@ -664,13 +664,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const radarRows = (summary?.scores_by_thematic_area ?? [])
     .filter(r => (radarHasValidation
       ? r.avg_validation_score
-      : (r.consolidated_compliance_score ?? r.avg_compliance_score)) !== null);
+      : r.avg_compliance_score) !== null);
   const radarData = radarRows.map((row, i) => ({
     area: String(i + 1),
     fullArea: row.thematic_area.replace(/^\d+\.\s*/, '').trim(),
     score: Number(Number(radarHasValidation
       ? row.avg_validation_score
-      : (row.consolidated_compliance_score ?? row.avg_compliance_score)
+      : row.avg_compliance_score
     ).toFixed(2)),
     fullMark: 4,
   }));
@@ -971,9 +971,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const source = summary.scores_by_thematic_area;
             const slopeRows: SlopeRow[] = source
-              .filter(r => (r.consolidated_compliance_score ?? r.avg_compliance_score) !== null && r.avg_validation_score !== null)
+              .filter(r => r.avg_compliance_score !== null && r.avg_validation_score !== null)
               .map((r, i) => {
-                const self = Number((r.consolidated_compliance_score ?? r.avg_compliance_score)!.toFixed(2));
+                const self = Number(r.avg_compliance_score!.toFixed(2));
                 const val  = Number(r.avg_validation_score!.toFixed(2));
                 return {
                   label: r.thematic_area.replace(/^\d+\.\s*/, '').trim(),
@@ -1180,7 +1180,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           {/* ── Summary of Consolidated Scores by Thematic Area — SV always; all roles on closed cycle ── */}
           {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const rows = summary.scores_by_thematic_area;
-            const compValues = rows.map(r => r.consolidated_compliance_score ?? r.avg_compliance_score).filter((v): v is number => v !== null);
+            const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
             const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
             const totalComp = compValues.length > 0 ? compValues.reduce((a, b) => a + b, 0) / compValues.length : null;
             const totalVal  = valValues.length  > 0 ? valValues.reduce((a, b) => a + b, 0)  / valValues.length  : null;
@@ -1212,7 +1212,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         <tr><td colSpan={4} className="small" style={{ textAlign: 'center', padding: 32 }}>No data yet.</td></tr>
                       )}
                       {rows.map(row => {
-                        const compScore = row.consolidated_compliance_score ?? row.avg_compliance_score;
+                        const compScore = row.avg_compliance_score;
                         const rowBg = compScore !== null ? `${scoreColor(compScore)}08` : undefined;
                         return (
                           <tr key={row.thematic_area} style={{ background: rowBg }}>

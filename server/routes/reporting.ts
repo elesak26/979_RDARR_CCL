@@ -431,23 +431,11 @@ router.get(
         [cycleId]
       );
 
-      const SCORE_LABEL: Record<number, string> = {
-        1: 'Non-compliant',
-        2: 'Partially compliant',
-        3: 'Largely compliant',
-        4: 'Fully compliant',
-      };
-      const scoreLabel = (v: string | null): string => {
-        if (v === null || v === undefined || v === '') return '';
-        const n = parseFloat(v);
-        return isNaN(n) ? v : `${SCORE_LABEL[Math.round(n)] ?? n}`;
-      };
-
       // Build workbook
       const wb = XLSX.utils.book_new();
 
       const sheetData = [
-        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'BCBS239 Principle', 'Description', 'Material Risk', 'Self Assessment Score', 'Self Assessment Label', 'Validation Score', 'Validation Score Label'],
+        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'BCBS239 Principle', 'Description', 'Risk Category', 'Self Assessment Score', 'Validation Score'],
         ...rows.rows.map(r => [
           r.bu_code,
           r.display_name,
@@ -457,13 +445,11 @@ router.get(
           r.description,
           r.material_risk ?? '',
           r.self_assessment_score != null ? parseFloat(r.self_assessment_score) : '',
-          scoreLabel(r.self_assessment_score),
           r.validation_score != null ? parseFloat(r.validation_score) : '',
-          scoreLabel(r.validation_score),
         ]),
       ];
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
-      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 28 }, { wch: 60 }, { wch: 20 }, { wch: 22 }, { wch: 24 }, { wch: 18 }, { wch: 24 }];
+      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 28 }, { wch: 60 }, { wch: 18 }, { wch: 22 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, ws, 'Validation Scores');
 
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
