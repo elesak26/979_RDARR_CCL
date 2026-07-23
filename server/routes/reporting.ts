@@ -371,7 +371,7 @@ router.get(
   }
 );
 
-// GET /api/reporting/cycle/:cycleId/export/excel — download xlsx for a closed cycle
+// GET /api/reporting/cycle/:cycleId/export/excel — download xlsx (all validations, any status)
 router.get(
   '/api/reporting/cycle/:cycleId/export/excel',
   async (req: Request, res: Response, next: NextFunction) => {
@@ -389,7 +389,7 @@ router.get(
       }
       const cycle = cycleRow.rows[0];
 
-      // ── Single sheet: one row per closed validation (question × BU × material_risk) ───
+      // ── Single sheet: one row per validation (question × BU × material_risk), all statuses ───
       const rows = await query<{
         bu_code: string;
         display_name: string;
@@ -424,7 +424,7 @@ router.get(
           AND r.bu_code = v.bu_code
           AND r.material_risk IS NOT DISTINCT FROM v.material_risk
           AND r.status = 'submitted'
-         WHERE v.cycle_id = $1 AND v.status = 'closed'
+         WHERE v.cycle_id = $1
          ORDER BY v.bu_code, q.item_number::int, v.material_risk NULLS FIRST`,
         [cycleId]
       );

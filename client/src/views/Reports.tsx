@@ -792,7 +792,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               {exporting ? 'Exporting…' : 'Export PDF'}
             </button>
           )}
-          {selectedCycle?.status === 'closed' && (
+          {(selectedCycle?.status === 'closed' ||
+            (selectedCycle?.status === 'distributed' &&
+              (currentUser?.role === 'Validator' || currentUser?.role === 'Senior Validator'))) && (
             <button
               className="btn"
               onClick={() => {
