@@ -12,8 +12,7 @@ DO $seed$ BEGIN
   INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('908', 'Operational Risk Management', 8);
   INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('006-956', 'Finance Reporting', 9);
   INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('902', 'Model Validation', 10);
-  INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('997', 'Enterprise Data, Risk & Insights Solutions', 11);
-  INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('974', 'Group Internal Control', 12);
+  INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('905', 'GROUP IT PMO & GOVERNANCE DIVISION', 11);
   INSERT INTO respondent_units (bu_code, bu_name, sort_order) VALUES ('979', 'RDARR Validation', 13);
   END IF;
 END $seed$;
@@ -29,7 +28,6 @@ DO $seed$ BEGIN
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (2, '961-Liquidity', 0.025000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (2, '961-Market', 0.100000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (2, '966', 0.200000000000000000);
-  INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (2, '974', 0.150000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (3, '966', 1.000000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (4, '966', 1.000000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (5, '966', 1.000000000000000000);
@@ -71,7 +69,7 @@ DO $seed$ BEGIN
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '006-956', 0.111111111111111111);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '023', 0.111111111111111111);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '030', 0.111111111111111111);
-  INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '997', 0.111111111111111111);
+  INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '905', 0.111111111111111111);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '908', 0.111111111111111111);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '961-IRRBB', 0.111111111111111111);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (19, '961-Liquidity', 0.111111111111111111);
@@ -81,7 +79,7 @@ DO $seed$ BEGIN
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '006-956', 0.125000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '023', 0.125000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '030', 0.125000000000000000);
-  INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '997', 0.125000000000000000);
+  INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '905', 0.125000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '908', 0.125000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '961-IRRBB', 0.125000000000000000);
   INSERT INTO ccl_item_weights (item_number, bu_code, weight) VALUES (21, '961-Liquidity', 0.125000000000000000);

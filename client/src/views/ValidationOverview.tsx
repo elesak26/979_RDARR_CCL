@@ -231,6 +231,18 @@ export default function ValidationOverview() {
         </div>
       </div>
 
+      {selectedCycle?.status === 'closed' && (
+        <div style={{
+          padding: '10px 16px', marginBottom: 16,
+          background: 'rgba(40,167,69,0.08)',
+          border: '1px solid var(--ok)',
+          borderRadius: 6, fontSize: 13, color: 'var(--ok)',
+          fontWeight: 500,
+        }}>
+          This cycle is complete — all validations have been approved. View only.
+        </div>
+      )}
+
       {loading && <div className="small" style={{ padding: 24, color: 'var(--muted)' }}>Loading…</div>}
       {error && <div style={{ color: 'var(--danger)', padding: 16 }}>Error: {error}</div>}
 

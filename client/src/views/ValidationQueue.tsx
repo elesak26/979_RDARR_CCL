@@ -118,6 +118,17 @@ export default function ValidationQueue() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setCycleFilter(urlCycleId); }, [urlCycleId]);
 
+  // Auto-expand closed section when there are no actionable items; collapse when they reappear
+  useEffect(() => {
+    if (currentUser?.role !== 'Validator') return;
+    const hasActionable = items.some(i => ['rejected', 'in_review', 'returned', 'pending_approval'].includes(i.status));
+    if (!hasActionable && items.some(i => i.status === 'closed')) {
+      setClosedExpanded(true);
+    } else if (hasActionable) {
+      setClosedExpanded(false);
+    }
+  }, [items, currentUser?.role]);
+
   if (loading) return <div className="small">Loading validation queue…</div>;
   if (error) return (
     <div style={{ color: 'var(--danger)', padding: 16 }}>
@@ -337,6 +348,8 @@ export default function ValidationQueue() {
     };
 
     const validatorStatusesInCards: string[] = ['rejected', 'in_review', 'returned', 'pending_approval', 'closed'];
+    // Use unfiltered cycleFiltered (not displayedItems) so a BU-filter selection doesn't falsely trigger "cycle complete"
+    const allItemsClosed = cycleFiltered.length > 0 && cycleFiltered.every(i => i.status === 'closed');
 
     return (
       <div>
@@ -344,6 +357,15 @@ export default function ValidationQueue() {
         <div className="topbar" style={{ marginBottom: 16 }}>
           <div className="left">
             <strong style={{ fontSize: 18 }}>Validation Actions</strong>
+            {allItemsClosed && (
+              <span style={{
+                fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+                background: 'rgba(40,167,69,.12)', color: 'var(--ok)',
+                border: '1px solid var(--ok)',
+              }}>
+                Cycle Complete — View only
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* BU filter */}

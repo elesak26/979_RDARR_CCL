@@ -100,7 +100,8 @@ router.get(
              AVG(CAST(r.compliance_score AS float))                                                                         AS compliance_score,
              SUM(r.compliance_score * COALESCE(r.weight, 1.0)) / NULLIF(SUM(COALESCE(r.weight, 1.0)), 0)   AS weighted_compliance_score,
              SUM(COALESCE(r.weight, 1.0))                                                                   AS total_weight,
-             MAX(v.validation_score)                                                                         AS validation_score
+             SUM(v.validation_score * COALESCE(r.weight, 1.0))
+               / NULLIF(SUM(CASE WHEN v.validation_score IS NOT NULL THEN COALESCE(r.weight, 1.0) ELSE 0 END), 0) AS validation_score
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
@@ -135,7 +136,8 @@ router.get(
              r.bu_code,
              SUM(r.compliance_score * COALESCE(r.weight, 1.0)) / NULLIF(SUM(COALESCE(r.weight, 1.0)), 0) AS compliance_score,
              SUM(COALESCE(r.weight, 1.0))                                                                   AS total_weight,
-             MAX(v.validation_score)                                                                         AS validation_score
+             SUM(v.validation_score * COALESCE(r.weight, 1.0))
+               / NULLIF(SUM(CASE WHEN v.validation_score IS NOT NULL THEN COALESCE(r.weight, 1.0) ELSE 0 END), 0) AS validation_score
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
@@ -398,6 +400,7 @@ router.get(
         bcbs_principle_name: string | null;
         description: string;
         material_risk: string | null;
+        self_assessment_score: string | null;
         validation_score: string | null;
       }>(
         `SELECT
@@ -413,9 +416,16 @@ router.get(
            q.bcbs_principle_name,
            q.requirement                                                            AS description,
            CASE TRIM(v.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(v.material_risk) END AS material_risk,
+           r.compliance_score::text                                                 AS self_assessment_score,
            v.validation_score::text
          FROM validations v
          JOIN questions q ON q.id = v.question_id
+         LEFT JOIN responses r
+           ON r.cycle_id = v.cycle_id
+          AND r.question_id = v.question_id
+          AND r.bu_code = v.bu_code
+          AND r.material_risk IS NOT DISTINCT FROM v.material_risk
+          AND r.status = 'submitted'
          WHERE v.cycle_id = $1 AND v.status = 'closed'
          ORDER BY v.bu_code, q.item_number::int, v.material_risk NULLS FIRST`,
         [cycleId]
@@ -437,7 +447,7 @@ router.get(
       const wb = XLSX.utils.book_new();
 
       const sheetData = [
-        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'BCBS239 Principle', 'Description', 'Material Risk', 'Validation Score', 'Score Label'],
+        ['Respondent (BU Code)', 'Respondent Name', 'Item No.', 'Thematic Area', 'BCBS239 Principle', 'Description', 'Material Risk', 'Self Assessment Score', 'Self Assessment Label', 'Validation Score', 'Validation Score Label'],
         ...rows.rows.map(r => [
           r.bu_code,
           r.display_name,
@@ -446,12 +456,14 @@ router.get(
           r.bcbs_principle_name ?? '',
           r.description,
           r.material_risk ?? '',
+          r.self_assessment_score != null ? parseFloat(r.self_assessment_score) : '',
+          scoreLabel(r.self_assessment_score),
           r.validation_score != null ? parseFloat(r.validation_score) : '',
           scoreLabel(r.validation_score),
         ]),
       ];
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
-      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 28 }, { wch: 60 }, { wch: 20 }, { wch: 18 }, { wch: 22 }];
+      ws['!cols'] = [{ wch: 22 }, { wch: 34 }, { wch: 10 }, { wch: 30 }, { wch: 28 }, { wch: 60 }, { wch: 20 }, { wch: 22 }, { wch: 24 }, { wch: 18 }, { wch: 24 }];
       XLSX.utils.book_append_sheet(wb, ws, 'Validation Scores');
 
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

@@ -269,8 +269,42 @@ export default function MyAssignments({ currentUser }: Props) {
   const draftResponses = cycleResponses.filter(r => r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned');
   const submittedResponses = cycleResponses.filter(r => r.status === 'submitted');
   const allScored = draftResponses.every(r => (drafts[r.id]?.score ?? null) !== null);
+
+  // For material-risk BUs (961), submission is only allowed when ALL sub-units are fully scored
+  const allSubUnitsScored = hasMaterialRiskSubs
+    ? materialRiskSubCodes.every(code => {
+        const subDrafts = responses.filter(r =>
+          r.cycle_id === activeCycleId &&
+          r.bu_code === code &&
+          (r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned')
+        );
+        return subDrafts.length === 0 || subDrafts.every(r => (drafts[r.id]?.score ?? null) !== null);
+      })
+    : allScored;
+
   const allSubmitted = draftResponses.length === 0 && cycleResponses.length > 0;
-  const justSubmitted = submittedCycles.has(activeCycleId) && allSubmitted;
+
+  // Cross-tab pending check for material-risk BUs — avoids false "nothing to submit" on a fully-submitted tab
+  const anySubUnitsPending = hasMaterialRiskSubs
+    ? materialRiskSubCodes.some(code =>
+        responses.some(r =>
+          r.cycle_id === activeCycleId &&
+          r.bu_code === code &&
+          (r.status === 'draft' || r.status === 'in_progress' || r.status === 'returned')
+        )
+      )
+    : draftResponses.length > 0;
+
+  // For material-risk BUs, allSubmitted means all sub-units are fully submitted
+  const allSubUnitsSubmitted = hasMaterialRiskSubs
+    ? materialRiskSubCodes.every(code =>
+        responses.filter(r => r.cycle_id === activeCycleId && r.bu_code === code)
+          .every(r => r.status === 'submitted')
+      ) && materialRiskSubCodes.some(code =>
+        responses.some(r => r.cycle_id === activeCycleId && r.bu_code === code)
+      )
+    : allSubmitted;
+  const justSubmitted = submittedCycles.has(activeCycleId) && (hasMaterialRiskSubs ? allSubUnitsSubmitted : allSubmitted);
 
   // Status filter pool — within the selected cycle
   const visibleResponses = statusFilter === 'pending'
@@ -700,15 +734,15 @@ export default function MyAssignments({ currentUser }: Props) {
                 <span style={{ color: 'var(--warn)', fontWeight: 600 }}>{draftResponses.length}</span> pending ·{' '}
                 <span style={{ color: 'var(--ok)', fontWeight: 600 }}>{submittedResponses.length}</span> submitted
               </span>
-              {!allSubmitted && (
+              {!(hasMaterialRiskSubs ? allSubUnitsSubmitted : allSubmitted) && (
                 <button
                   className="btn primary"
                   onClick={handleSubmitCycle}
-                  disabled={submitAllBusy || !allScored || draftResponses.length === 0}
+                  disabled={submitAllBusy || !allSubUnitsScored || !anySubUnitsPending}
                   title={
-                    !allScored
-                      ? 'Score all CCL items before submitting'
-                      : draftResponses.length === 0
+                    !allSubUnitsScored
+                      ? 'Score all CCL items across all material risk tabs before submitting'
+                      : !anySubUnitsPending
                       ? 'All items are already submitted'
                       : `Submit ${selectedCycle.name} to RDARR for validation`
                   }
@@ -885,15 +919,17 @@ export default function MyAssignments({ currentUser }: Props) {
           <div style={{ height: 8, background: 'var(--panel2)', borderRadius: 4, border: '1px solid var(--line)', overflow: 'hidden' }}>
             <div style={{
               height: '100%',
-              background: allScored ? 'var(--ok)' : 'var(--accent)',
+              background: allSubUnitsScored ? 'var(--ok)' : 'var(--accent)',
               borderRadius: 4,
               width: `${((draftResponses.filter(r => (drafts[r.id]?.score ?? null) !== null).length + submittedResponses.length) / Math.max(cycleResponses.length, 1)) * 100}%`,
               transition: 'width .3s ease',
             }} />
           </div>
-          {!allScored && (
+          {!allSubUnitsScored && (
             <div className="small" style={{ marginTop: 6, color: 'var(--muted)' }}>
-              Score all {draftResponses.length} pending item{draftResponses.length !== 1 ? 's' : ''} to unlock the Submit button.
+              {hasMaterialRiskSubs
+                ? 'Score all items across all material risk tabs to unlock the Submit button.'
+                : `Score all ${draftResponses.length} pending item${draftResponses.length !== 1 ? 's' : ''} to unlock the Submit button.`}
             </div>
           )}
         </div>
@@ -945,7 +981,7 @@ export default function MyAssignments({ currentUser }: Props) {
       {renderCycleSection(selectedCycle, visibleResponses)}
 
       {/* Sticky footer submit bar */}
-      {!isClosed && !allSubmitted && draftResponses.length > 0 && (
+      {!isClosed && !(hasMaterialRiskSubs ? allSubUnitsSubmitted : allSubmitted) && draftResponses.length > 0 && (
         <div style={{
           position: 'sticky', bottom: 0,
           padding: '12px 16px',
@@ -957,14 +993,16 @@ export default function MyAssignments({ currentUser }: Props) {
           marginTop: 8,
         }}>
           <div className="small">
-            {allScored
+            {allSubUnitsScored
               ? `All items scored — ready to submit ${multiCycle ? selectedCycle.name : 'your self-assessment'} to RDARR.`
+              : hasMaterialRiskSubs
+              ? `Score all items across all material risk tabs to unlock submission.`
               : `${draftResponses.filter(r => (drafts[r.id]?.score ?? null) === null).length} item${draftResponses.filter(r => (drafts[r.id]?.score ?? null) === null).length !== 1 ? 's' : ''} still need a score.`}
           </div>
           <button
             className="btn primary"
             onClick={handleSubmitCycle}
-            disabled={submitAllBusy || !allScored}
+            disabled={submitAllBusy || !allSubUnitsScored}
             style={{ fontWeight: 600 }}
           >
             {submitAllBusy ? 'Submitting…' : 'Submit Self-Assessment to RDARR Validation Unit'}

@@ -417,6 +417,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [auditCycleId, setAuditCycleId] = useState<string>('');
   const [auditEntityType, setAuditEntityType] = useState<string>('All');
   const [auditActorRole, setAuditActorRole] = useState<string>('All');
+  const [auditActorId, setAuditActorId] = useState<string>('All');
   const [auditDateFrom, setAuditDateFrom] = useState<string>('');
   const [auditDateTo, setAuditDateTo] = useState<string>('');
   const [exporting, setExporting] = useState(false);
@@ -481,7 +482,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     if (auditActorRole !== 'All') params.set('actor_role', auditActorRole);
     if (auditDateFrom) params.set('from', auditDateFrom);
     if (auditDateTo) params.set('to', auditDateTo);
-    params.set('limit', '100');
+    params.set('limit', '500');
     return params;
   }, [auditCycleId, auditEntityType, auditActorRole, auditDateFrom, auditDateTo]);
 
@@ -1854,9 +1855,26 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span className="small" style={{ color: 'var(--muted)' }}>Actor Role</span>
-              <select value={auditActorRole} onChange={e => setAuditActorRole(e.target.value)} style={{ minWidth: 150 }}>
+              <span className="small" style={{ color: 'var(--muted)' }}>Role</span>
+              <select value={auditActorRole} onChange={e => { setAuditActorRole(e.target.value); setAuditActorId('All'); }} style={{ minWidth: 150 }}>
                 {ACTOR_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span className="small" style={{ color: 'var(--muted)' }}>Actor</span>
+              <select value={auditActorId} onChange={e => setAuditActorId(e.target.value)} style={{ minWidth: 180 }}>
+                <option value="All">All actors</option>
+                {Array.from(
+                  new Map(
+                    auditEntries
+                      .filter(e => e.actor_id != null)
+                      .map(e => [e.actor_id, e.actor_name ?? e.actor_id])
+                  ).entries()
+                )
+                  .sort((a, b) => (a[1] ?? '').localeCompare(b[1] ?? ''))
+                  .map(([id, name]) => (
+                    <option key={id} value={id!}>{name}</option>
+                  ))}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -1906,7 +1924,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               <tbody>
                 {auditLoading && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
                 {!auditLoading && auditEntries.length === 0 && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No audit entries found.</td></tr>}
-                {!auditLoading && auditEntries.map(entry => {
+                {!auditLoading && auditEntries.length > 0 && (() => {
+                  const filtered = auditEntries.filter(e => auditActorId === 'All' || e.actor_id === auditActorId);
+                  if (filtered.length === 0) {
+                    return <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No entries match the selected actor.</td></tr>;
+                  }
+                  return filtered.map(entry => {
                   const d = entry.details ?? {};
 
                   const ACTION_LABELS: Record<string, string> = {
@@ -2002,7 +2025,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                       </td>
                     </tr>
                   );
-                })}
+                  });
+                })()}
               </tbody>
             </table>
           </div>

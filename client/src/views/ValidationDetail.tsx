@@ -322,6 +322,18 @@ export default function ValidationDetail() {
       </div>
 
       {/* Notice banners */}
+      {isClosed && (
+        <div style={{
+          padding: '10px 16px', marginBottom: 16,
+          background: 'rgba(40,167,69,0.08)',
+          border: '1px solid var(--ok)',
+          borderRadius: 6, fontSize: 13, color: 'var(--ok)',
+          fontWeight: 500,
+        }}>
+          This validation is closed — view only. The cycle has been completed and approved.
+        </div>
+      )}
+
       {isValidator && isPendingApproval && (
         <div style={{
           padding: '10px 16px', marginBottom: 16,
