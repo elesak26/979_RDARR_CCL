@@ -28,5 +28,5 @@ RUN chmod +x /app/docker-entrypoint.sh && \
 
 USER nginx
 
-EXPOSE 80
+EXPOSE 80 443
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

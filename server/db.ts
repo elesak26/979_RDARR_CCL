@@ -8,7 +8,15 @@ export interface QueryResult<T = Record<string, unknown>> {
 
 function buildPoolConfig() {
   const cs = process.env.DB_CONNECTION_STRING?.trim();
-  if (cs) return { connectionString: cs };
+  // DB_SSL=require  → enforce TLS, verify server certificate (production default)
+  // DB_SSL=allow    → use TLS if available, skip cert verification
+  // DB_SSL=disable  → no TLS (local dev only)
+  const sslMode = process.env.DB_SSL ?? (process.env.NODE_ENV === 'production' ? 'require' : 'disable');
+  const ssl = sslMode === 'disable' ? false
+    : sslMode === 'allow'   ? { rejectUnauthorized: false }
+    : { rejectUnauthorized: true }; // 'require'
+
+  if (cs) return { connectionString: cs, ssl: ssl || undefined };
   return {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -17,6 +25,7 @@ function buildPoolConfig() {
     password: process.env.DB_PASSWORD || '',
     max: parseInt(process.env.DB_POOL_MAX || (process.env.NODE_ENV === 'production' ? '20' : '10'), 10),
     idleTimeoutMillis: 30_000,
+    ssl: ssl || undefined,
   };
 }
 

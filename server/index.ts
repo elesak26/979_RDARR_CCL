@@ -33,7 +33,18 @@ const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    origin: (origin, cb) => {
+      const allowed = [
+        process.env.CORS_ORIGIN || 'http://localhost:5173',
+        'http://localhost:4001',
+        /\.trycloudflare\.com$/,
+      ];
+      if (!origin || allowed.some(p => typeof p === 'string' ? p === origin : p.test(origin))) {
+        cb(null, true);
+      } else {
+        cb(new Error(`CORS: origin ${origin} not allowed`));
+      }
+    },
     credentials: true,
   })
 );
@@ -47,6 +58,19 @@ app.use(
     autoLogging: { ignore: (req) => req.url === '/api/health' },
   })
 );
+
+// ── HTTPS enforcement (production only) ─────────────────────────────────────
+// Behind a reverse proxy (nginx / Azure Front Door) the plain-TCP connection
+// arrives as HTTP; the proxy sets X-Forwarded-Proto so we can detect it and
+// issue a permanent redirect before any API logic runs.
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] === 'http') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
 // The Core runs behind the UI's nginx (which proxies /api) — without trust proxy,
