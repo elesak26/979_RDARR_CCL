@@ -79,9 +79,9 @@ router.get(
       );
 
       // ── Scores by thematic area ──────────────────────────────────────────────
-      // Each (question, BU, risk_category) response row is a separate data point.
-      // Step 1: average all data points per question → per_question score.
-      // Step 2: average per_question scores per thematic area.
+      // Two-stage avg: first avg per question (flat over BU×material_risk rows),
+      // then avg of those per-question scores per thematic area.
+      // Overall = avg of per-area averages.
       const byAreaParams: unknown[] = [cycleId];
       const byAreaBuFilter = buCode ? ` AND r.bu_code = $2` : '';
       if (buCode) byAreaParams.push(buCode);
@@ -93,28 +93,42 @@ router.get(
         response_count: string;
       }>(
         `WITH per_question AS (
-           -- One row per question: simple average across all (BU, risk_category) data points
            SELECT
              r.question_id,
-             AVG(r.compliance_score::float)  AS compliance_score,
-             AVG(v.validation_score::float)  AS validation_score
+             q.thematic_area,
+             AVG(r.compliance_score::numeric)   AS compliance_score,
+             AVG(v.validation_score::numeric)   AS validation_score
            FROM responses r
+           JOIN questions q ON q.id = r.question_id
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
              AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted'${byAreaBuFilter}
-           GROUP BY r.question_id
+           GROUP BY r.question_id, q.thematic_area
+         ),
+         per_area AS (
+           SELECT
+             thematic_area,
+             AVG(compliance_score)  AS avg_compliance_score,
+             AVG(validation_score)  AS avg_validation_score,
+             COUNT(*)               AS response_count
+           FROM per_question
+           GROUP BY thematic_area
          )
-         SELECT
-           q.thematic_area,
-           ROUND(AVG(pq.compliance_score)::numeric, 2)  AS avg_compliance_score,
-           ROUND(AVG(pq.compliance_score)::numeric, 2)  AS consolidated_compliance_score,
-           ROUND(AVG(pq.validation_score)::numeric, 2)  AS avg_validation_score,
-           COUNT(DISTINCT pq.question_id)               AS response_count
-         FROM per_question pq
-         JOIN questions q ON q.id = pq.question_id
-         GROUP BY q.thematic_area
-         ORDER BY q.thematic_area`,
+         SELECT thematic_area,
+                ROUND(avg_compliance_score::numeric, 2) AS avg_compliance_score,
+                ROUND(avg_compliance_score::numeric, 2) AS consolidated_compliance_score,
+                ROUND(avg_validation_score::numeric, 2) AS avg_validation_score,
+                response_count::bigint                  AS response_count
+         FROM per_area
+         UNION ALL
+         SELECT '__overall__',
+                ROUND(AVG(avg_compliance_score)::numeric, 2),
+                ROUND(AVG(avg_compliance_score)::numeric, 2),
+                ROUND(AVG(avg_validation_score)::numeric, 2),
+                SUM(response_count)
+         FROM per_area
+         ORDER BY thematic_area`,
         byAreaParams
       );
 
@@ -155,37 +169,50 @@ router.get(
       );
 
       // ── Scores by BCBS 239 Principle ─────────────────────────────────────
-      // Each (question, BU, risk_category) row is a data point.
-      // Step 1: average all data points per question.
-      // Step 2: unnest principles, then average per-question scores per principle.
+      // Two-stage avg: first avg per question (flat over BU×material_risk rows),
+      // then avg of those per-question scores per principle. No overall row.
       const byBcbsResult = await query<{
         bcbs_principle_name: string | null;
         avg_compliance_score: string;
         avg_validation_score: string;
         response_count: string;
+        sort_null: string;
+        sort_num: string | null;
       }>(
         `WITH per_question AS (
            SELECT
              r.question_id,
-             AVG(r.compliance_score::float)  AS compliance_score,
-             AVG(v.validation_score::float)  AS validation_score
+             TRIM(s)                            AS bcbs_principle_name,
+             MIN(q.bcbs_principle_number)       AS sort_num,
+             AVG(r.compliance_score::numeric)   AS compliance_score,
+             AVG(v.validation_score::numeric)   AS validation_score
            FROM responses r
+           JOIN questions q ON q.id = r.question_id
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
              AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
+           CROSS JOIN LATERAL unnest(string_to_array(q.bcbs_principle_name, '|')) AS s
            WHERE r.cycle_id = $1 AND r.status = 'submitted'
-           GROUP BY r.question_id
+           GROUP BY r.question_id, TRIM(s)
+         ),
+         per_principle AS (
+           SELECT
+             bcbs_principle_name,
+             AVG(compliance_score)  AS avg_compliance_score,
+             AVG(validation_score)  AS avg_validation_score,
+             COUNT(*)               AS response_count,
+             MIN(sort_num)          AS sort_num
+           FROM per_question
+           GROUP BY bcbs_principle_name
          )
-         SELECT
-           TRIM(s)                                            AS bcbs_principle_name,
-           ROUND(AVG(pq.compliance_score)::numeric, 2)       AS avg_compliance_score,
-           ROUND(AVG(pq.validation_score)::numeric, 2)       AS avg_validation_score,
-           COUNT(pq.question_id)                             AS response_count
-         FROM per_question pq
-         JOIN questions q ON q.id = pq.question_id
-         CROSS JOIN LATERAL unnest(string_to_array(q.bcbs_principle_name, '|')) AS s
-         GROUP BY TRIM(s)
-         ORDER BY CASE WHEN MIN(q.bcbs_principle_number) IS NULL THEN 1 ELSE 0 END, MIN(q.bcbs_principle_number), TRIM(s)`,
+         SELECT bcbs_principle_name,
+                ROUND(avg_compliance_score::numeric, 2) AS avg_compliance_score,
+                ROUND(avg_validation_score::numeric, 2) AS avg_validation_score,
+                response_count::bigint                  AS response_count,
+                CASE WHEN sort_num IS NULL THEN 1 ELSE 0 END AS sort_null,
+                sort_num
+         FROM per_principle
+         ORDER BY sort_null, sort_num, bcbs_principle_name`,
         [cycleId]
       );
 
@@ -209,7 +236,7 @@ router.get(
              -- counts from responses only (no join fan-out)
              COUNT(r.id)                                                                     AS r_count,
              COUNT(CASE WHEN r.status = 'submitted' THEN r.id END)                          AS r_submitted,
-             AVG(CASE WHEN r.status = 'submitted' THEN r.compliance_score::float END)       AS compliance_score
+             AVG(CASE WHEN r.status = 'submitted' THEN r.compliance_score::numeric END)       AS compliance_score
            FROM responses r
            WHERE r.cycle_id = $1
            GROUP BY r.bu_code,
@@ -220,7 +247,7 @@ router.get(
            SELECT
              v.bu_code,
              v.question_id,
-             AVG(v.validation_score::float)                                        AS validation_score,
+             AVG(v.validation_score::numeric)                                        AS validation_score,
              MAX(CASE WHEN v.validation_score IS NOT NULL THEN 1 ELSE 0 END)       AS has_validation
            FROM validations v
            WHERE v.cycle_id = $1
@@ -242,9 +269,8 @@ router.get(
       );
 
       // ── Scores by material risk ──────────────────────────────────────────
-      // Each (question, BU, risk_category) row is a data point.
-      // Step 1: average all data points per (question, risk_category).
-      // Step 2: average per-question scores per risk_category.
+      // Two-stage avg: first avg per question (flat over BU rows for that risk),
+      // then avg of those per-question scores per risk category. No overall row.
       const byMaterialRiskResult = await query<{
         material_risk: string;
         avg_compliance_score: string;
@@ -253,27 +279,22 @@ router.get(
       }>(
         `WITH per_question AS (
            SELECT
-             CASE TRIM(r.material_risk)
-               WHEN 'IRRBB' THEN 'IRRBB Risk'
-               ELSE TRIM(r.material_risk)
-             END AS material_risk,
              r.question_id,
-             AVG(r.compliance_score::float)  AS compliance_score,
-             AVG(v.validation_score::float)  AS validation_score
+             CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END AS material_risk,
+             AVG(r.compliance_score::numeric)   AS compliance_score,
+             AVG(v.validation_score::numeric)   AS validation_score
            FROM responses r
            LEFT JOIN validations v
              ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
              AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1 AND r.status = 'submitted' AND r.material_risk IS NOT NULL
-           GROUP BY
-             CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END,
-             r.question_id
+           GROUP BY r.question_id,
+                    CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END
          )
-         SELECT
-           material_risk,
-           ROUND(AVG(compliance_score)::numeric, 2)  AS avg_compliance_score,
-           ROUND(AVG(validation_score)::numeric, 2)  AS avg_validation_score,
-           COUNT(DISTINCT question_id)               AS response_count
+         SELECT material_risk,
+                ROUND(AVG(compliance_score)::numeric, 2) AS avg_compliance_score,
+                ROUND(AVG(validation_score)::numeric, 2) AS avg_validation_score,
+                COUNT(*)::bigint                          AS response_count
          FROM per_question
          GROUP BY material_risk
          ORDER BY material_risk`,
@@ -322,24 +343,33 @@ router.get(
           total_submitted_questions: parseInt(counts.total_submitted_questions ?? '0', 10),
         },
         scores_by_bcbs_principle: byBcbsResult.rows.map((r) => ({
-          bcbs_principle_name:   r.bcbs_principle_name ?? null,
-          avg_compliance_score:  r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
-          avg_validation_score:  r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
-          response_count:        parseInt(r.response_count, 10),
-        })),
-        scores_by_thematic_area: byAreaResult.rows.map((r) => ({
-          thematic_area:                r.thematic_area,
-          avg_compliance_score:         r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
-          consolidated_compliance_score: r.consolidated_compliance_score != null ? parseFloat(r.consolidated_compliance_score) : null,
-          avg_validation_score:         r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
-          response_count:               parseInt(r.response_count, 10),
-        })),
+            bcbs_principle_name:   r.bcbs_principle_name ?? null,
+            avg_compliance_score:  r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
+            avg_validation_score:  r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
+            response_count:        parseInt(r.response_count, 10),
+          })),
+        scores_by_thematic_area: byAreaResult.rows
+          .filter((r) => r.thematic_area !== '__overall__')
+          .map((r) => ({
+            thematic_area:                r.thematic_area,
+            avg_compliance_score:         r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
+            consolidated_compliance_score: r.consolidated_compliance_score != null ? parseFloat(r.consolidated_compliance_score) : null,
+            avg_validation_score:         r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
+            response_count:               parseInt(r.response_count, 10),
+          })),
+        scores_by_thematic_area_overall: (() => {
+          const ov = byAreaResult.rows.find((r) => r.thematic_area === '__overall__');
+          return ov ? {
+            avg_compliance_score: ov.avg_compliance_score != null ? parseFloat(ov.avg_compliance_score) : null,
+            avg_validation_score: ov.avg_validation_score != null ? parseFloat(ov.avg_validation_score) : null,
+          } : null;
+        })(),
         scores_by_material_risk: byMaterialRiskResult.rows.map((r) => ({
-          material_risk:        r.material_risk,
-          avg_compliance_score: r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
-          avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
-          response_count:       parseInt(r.response_count, 10),
-        })),
+            material_risk:        r.material_risk,
+            avg_compliance_score: r.avg_compliance_score != null ? parseFloat(r.avg_compliance_score) : null,
+            avg_validation_score: r.avg_validation_score != null ? parseFloat(r.avg_validation_score) : null,
+            response_count:       parseInt(r.response_count, 10),
+          })),
         scores_by_thematic_area_by_bu: byAreaByBuResult.rows.map((r) => ({
           thematic_area:        r.thematic_area,
           bu_code:              r.bu_code,
@@ -389,7 +419,7 @@ router.get(
       }
       const cycle = cycleRow.rows[0];
 
-      // ── Single sheet: one row per validation (question × BU × material_risk), all statuses ───
+      // ── Single sheet: one row per submitted response, LEFT JOIN validations for score ───
       const rows = await query<{
         bu_code: string;
         display_name: string;
@@ -402,30 +432,29 @@ router.get(
         validation_score: string | null;
       }>(
         `SELECT
-           SPLIT_PART(v.bu_code, '-', 1)                                            AS bu_code,
+           SPLIT_PART(r.bu_code, '-', 1)                                            AS bu_code,
            COALESCE(
              (SELECT display_name FROM users
-              WHERE role = 'Responder' AND unit_codes ? v.bu_code
+              WHERE role = 'Responder' AND unit_codes ? SPLIT_PART(r.bu_code, '-', 1)
               LIMIT 1),
-             v.bu_code
+             SPLIT_PART(r.bu_code, '-', 1)
            )                                                                        AS display_name,
            q.item_number::text,
            q.thematic_area,
            q.bcbs_principle_name,
            q.requirement                                                            AS description,
-           CASE TRIM(v.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(v.material_risk) END AS material_risk,
+           CASE TRIM(r.material_risk) WHEN 'IRRBB' THEN 'IRRBB Risk' ELSE TRIM(r.material_risk) END AS material_risk,
            r.compliance_score::text                                                 AS self_assessment_score,
            v.validation_score::text
-         FROM validations v
-         JOIN questions q ON q.id = v.question_id
-         LEFT JOIN responses r
-           ON r.cycle_id = v.cycle_id
-          AND r.question_id = v.question_id
-          AND r.bu_code = v.bu_code
-          AND r.material_risk IS NOT DISTINCT FROM v.material_risk
-          AND r.status = 'submitted'
-         WHERE v.cycle_id = $1
-         ORDER BY v.bu_code, q.item_number::int, v.material_risk NULLS FIRST`,
+         FROM responses r
+         JOIN questions q ON q.id = r.question_id
+         LEFT JOIN validations v
+           ON v.cycle_id = r.cycle_id
+          AND v.question_id = r.question_id
+          AND v.bu_code = r.bu_code
+          AND v.material_risk IS NOT DISTINCT FROM r.material_risk
+         WHERE r.cycle_id = $1 AND r.status = 'submitted'
+         ORDER BY r.bu_code, q.item_number::int, r.material_risk NULLS FIRST`,
         [cycleId]
       );
 

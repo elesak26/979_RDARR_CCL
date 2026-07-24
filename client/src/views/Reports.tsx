@@ -6,7 +6,7 @@ import { displayFileName } from '../utils/displayFileName';
 import AdminAnalytics from './AdminAnalytics';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell, ReferenceLine, Legend,
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell, Legend,
 } from 'recharts';
 
 async function exportToPdf(el: HTMLElement, filename: string) {
@@ -142,6 +142,7 @@ interface CycleSummary {
   scores_by_thematic_area: ThematicAreaRow[];
   scores_by_thematic_area_by_bu: ThematicAreaByBuRow[];
   scores_by_material_risk: MaterialRiskRow[];
+  scores_by_thematic_area_overall: { avg_compliance_score: number | null; avg_validation_score: number | null } | null;
   scores_by_bu: BURow[];
   validation_vs_compliance: ValidationRow[];
 }
@@ -992,8 +993,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               overconfident: slopeRows.filter(d => d.category === 'overconfident').length,
               undervalued:   slopeRows.filter(d => d.category === 'undervalued').length,
             } : { overconfident: 0, undervalued: 0 };
-            const avgSelf = hasSlopeData ? slopeRows.reduce((s, r) => s + r.selfScore, 0) / slopeRows.length : null;
-            const avgVal  = hasSlopeData ? slopeRows.reduce((s, r) => s + r.validationScore, 0) / slopeRows.length : null;
+            const avgSelf = summary.scores_by_thematic_area_overall?.avg_compliance_score ?? null;
+            const avgVal  = summary.scores_by_thematic_area_overall?.avg_validation_score ?? null;
             const avgGap  = avgSelf !== null && avgVal !== null ? avgSelf - avgVal : null;
 
             return (
@@ -1049,12 +1050,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</div>
                         <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgSelf!.toFixed(2)}</div>
+                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgSelf?.toFixed(2) ?? '—'}</div>
                             <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Self</div>
                           </div>
                           <div style={{ width: 1, background: 'var(--line)', alignSelf: 'stretch' }} />
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgVal!.toFixed(2)}</div>
+                            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{avgVal?.toFixed(2) ?? '—'}</div>
                             <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>Validation</div>
                           </div>
                         </div>
@@ -1090,14 +1091,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             const FALLBACK = ['#c0392b', '#28a745', '#2980b9', '#8e44ad'];
             const riskPalette = (risk: string, idx: number) =>
               RISK_PALETTE[risk] ?? { accent: FALLBACK[idx % FALLBACK.length], bg: `${FALLBACK[idx % FALLBACK.length]}0d` };
-            const overallMrComp = (() => {
-              const vals = mrRows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
-              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-            })();
-            const overallMrVal = (() => {
-              const vals = mrRows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
-              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-            })();
             const InlineScore = ({ value, accent }: { value: number | null; accent: string }) => {
               if (value === null) return <span style={{ color: 'var(--muted)', fontSize: 12 }}>—</span>;
               const col = scoreColor(Math.round(value));
@@ -1165,14 +1158,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         </tr>
                       );
                     })}
-                    <tr style={{ background: 'var(--panel2)', borderTop: '2px solid var(--line)' }}>
-                      <td style={{ padding: '9px 14px', borderLeft: '4px solid var(--line)' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Portfolio Avg</span>
-                      </td>
-                      <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrComp} accent="var(--muted)" /></td>
-                      <td style={{ padding: '9px 14px' }}><InlineScore value={overallMrVal} accent="var(--muted)" /></td>
-                      <td />
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1182,10 +1167,8 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           {/* ── Summary of Consolidated Scores by Thematic Area — SV always; all roles on closed cycle ── */}
           {(currentUser?.role === 'Senior Validator' || selectedCycle?.status === 'closed') && (() => {
             const rows = summary.scores_by_thematic_area;
-            const compValues = rows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
-            const valValues  = rows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
-            const totalComp = compValues.length > 0 ? compValues.reduce((a, b) => a + b, 0) / compValues.length : null;
-            const totalVal  = valValues.length  > 0 ? valValues.reduce((a, b) => a + b, 0)  / valValues.length  : null;
+            const totalComp = summary.scores_by_thematic_area_overall?.avg_compliance_score ?? null;
+            const totalVal  = summary.scores_by_thematic_area_overall?.avg_validation_score ?? null;
             return (
               <div style={{
                 background: 'var(--panel)', border: '1px solid var(--line)',
@@ -1632,15 +1615,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               count: r.response_count,
             }));
 
-            const overallComp = (() => {
-              const vals = mrRows.map(r => r.avg_compliance_score).filter((v): v is number => v !== null);
-              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-            })();
-            const overallVal = (() => {
-              const vals = mrRows.map(r => r.avg_validation_score).filter((v): v is number => v !== null);
-              return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-            })();
-
             return (
               <div style={{
                 background: 'var(--panel)', border: '1px solid var(--line)',
@@ -1706,14 +1680,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                             name === 'compliance' ? 'Self Assessment' : 'Validation Score',
                           ]}
                         />
-                        {overallComp !== null && (
-                          <ReferenceLine x={overallComp} stroke="var(--accent-dark)" strokeDasharray="4 3" strokeWidth={1.5}
-                            label={{ value: `Avg ${overallComp.toFixed(2)}`, position: 'insideTopRight', fontSize: 9, fill: 'var(--accent-dark)', dy: -6 }} />
-                        )}
-                        {overallVal !== null && (
-                          <ReferenceLine x={overallVal} stroke="var(--ok)" strokeDasharray="4 3" strokeWidth={1.5}
-                            label={{ value: `Avg ${overallVal.toFixed(2)}`, position: 'insideBottomRight', fontSize: 9, fill: 'var(--ok)', dy: 6 }} />
-                        )}
                         <Bar dataKey="compliance" radius={[0, 4, 4, 0]} maxBarSize={18}>
                           {chartData.map((d, i) => (
                             <Cell key={d.risk} fill={riskPalette(d.risk, i).bar} fillOpacity={0.75} />
@@ -1768,24 +1734,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         </div>
                       );
                     })}
-                    {/* Overall average row */}
-                    <div style={{
-                      padding: '14px 20px',
-                      background: 'var(--panel2)',
-                      borderTop: '2px solid var(--line)',
-                    }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Portfolio Average</div>
-                      <div style={{ display: 'flex', gap: 12 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>Self</div>
-                          <ScoreBar value={overallComp} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>Validation</div>
-                          <ScoreBar value={overallVal} />
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
