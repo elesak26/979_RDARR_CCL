@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
+import { uploadFileFilter } from '../lib/uploadFilter';
 import { query } from '../db';
 import { logAudit } from '../audit';
 
@@ -39,6 +40,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  fileFilter: uploadFileFilter,
 });
 
 // GET /api/cycles/:cycleId/responses/:id/attachments

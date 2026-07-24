@@ -11,6 +11,9 @@ import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 
 import { logger } from './logger';
+import { assertBypassFlagsAllowed, APP_ENV, DISABLE_LOGIN, UAT_PERSONA_MODE } from './lib/appEnv';
+import { mappingActive, preloadGroupMappings } from './lib/groupRoles';
+import { msalEnabled, assertConfigIfEnabled as assertMsalConfig } from './lib/msalClient';
 import { authMiddleware } from './middleware/auth';
 import { errorHandler } from './middleware/error-handler';
 import { generalLimiter } from './middleware/rate-limit';
@@ -26,6 +29,28 @@ import validationsRouter from './routes/validations';
 import reportingRouter from './routes/reporting';
 import auditRouter from './routes/audit';
 import notificationsRouter from './routes/notifications';
+import groupMappingsRouter from './routes/group-mappings';
+
+// Before anything else: an authentication bypass outside a declared
+// non-production environment is fatal, not a warning. Throwing here happens
+// before the server binds, so the container fails its health check and the
+// deployment is rejected rather than quietly serving unauthenticated traffic.
+assertBypassFlagsAllowed();
+// MSAL (Entra) login: if selected, its config must be complete before we bind.
+assertMsalConfig();
+logger.info(
+  {
+    appEnv: APP_ENV || '(undeclared — treated as production)',
+    disableLogin: DISABLE_LOGIN,
+    uatPersonaMode: UAT_PERSONA_MODE,
+    groupRoleMapping: mappingActive() ? 'entra (DB-backed)' : 'off (persona mode)',
+    authProvider: msalEnabled() ? 'entra (MSAL)' : 'oidc',
+  },
+  'Authentication posture'
+);
+// Warm the group→role cache so the first authenticated request does not pay for
+// the initial DB read (best-effort; no-op unless AUTH_PROVIDER=entra).
+preloadGroupMappings().catch(() => {});
 
 const app = express();
 
@@ -77,6 +102,7 @@ app.use(validationsRouter);
 app.use(reportingRouter);
 app.use(auditRouter);
 app.use(notificationsRouter);
+app.use(groupMappingsRouter);
 
 // ── Serve built client (production / single-server mode) ─────────────────────
 const clientDist = path.resolve(__dirname, '../client/dist');

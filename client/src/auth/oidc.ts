@@ -11,12 +11,28 @@
  * OIDC login is the authentication GATE, not the role source.
  */
 
-const TOKEN_KEY = 'ccl-access-token';
-const TOKEN_EXP_KEY = 'ccl-token-exp';
-const IDTOKEN_KEY = 'ccl-id-token';
-const PROFILE_KEY = 'ccl-identity';
+// Deliberately no token keys here any more. Tokens live only in the Core's
+// encrypted httpOnly session cookie; anything the browser can read, a script on
+// the page can read too.
 const VERIFIER_KEY = 'ccl-pkce-verifier';
 const STATE_KEY = 'ccl-oidc-state';
+const RETURN_KEY = 'ccl-return-to';
+
+/** Where to send the user after a login round-trip.
+ *
+ *  The IdP can only return to the registered redirect_uri (the app root), and
+ *  the scope has no `offline_access`, so a token renewal is a full-page trip
+ *  through NBG Identity. Without remembering the route, every renewal silently
+ *  dumps the user back on the Dashboard, mid-task — which is what users report
+ *  as "it refreshed and changed my screen".
+ *
+ *  Guard the stored value: only a same-origin absolute path is ever accepted,
+ *  never a full URL or a protocol-relative one, so this can never become an
+ *  open redirect. */
+function safeReturnPath(p: string | null): string {
+  if (!p || !p.startsWith('/') || p.startsWith('//')) return '/';
+  return p;
+}
 
 export interface AuthConfig {
   enabled: boolean;
@@ -81,41 +97,45 @@ async function sha256(input: string): Promise<string> {
   return b64url(new Uint8Array(digest));
 }
 
-// ── Token storage ─────────────────────────────────────────────────────────────
-export function getAccessToken(): string | null {
-  const t = sessionStorage.getItem(TOKEN_KEY);
-  if (!t) return null;
-  const exp = Number(sessionStorage.getItem(TOKEN_EXP_KEY) || 0);
-  // Treat as gone 30s before real expiry so we re-login proactively.
-  if (exp && Date.now() > exp - 30_000) return null;
-  return t;
+// ── Session ───────────────────────────────────────────────────────────────────
+// The browser holds NO tokens. /auth/exchange puts them in an encrypted httpOnly
+// cookie on the Core and this asks only "am I signed in, and as whom". That is
+// what stops the SPA from redirecting on its own: there is no expiry here to
+// watch, so nothing can decide mid-task that the user must go to the IdP again.
+// Matches BIA / pf-editor / EWS / LoanFileTransfer.
+export interface Session {
+  authenticated: boolean;
+  auth_enabled: boolean;
+  profile: Identity | null;
 }
 
-// The id_token is the JWT the backend can JWKS-verify (the access_token is opaque
-// on the NBG IdP). Sent as X-Id-Token on /api calls so the Core can authenticate.
-export function getIdToken(): string | null {
-  return sessionStorage.getItem(IDTOKEN_KEY);
+let cachedSession: Session | null = null;
+
+export async function fetchSession(force = false): Promise<Session> {
+  if (cachedSession && !force) return cachedSession;
+  try {
+    const res = await fetch('/auth/session', { credentials: 'include' });
+    cachedSession = res.ok
+      ? ((await res.json()) as Session)
+      : { authenticated: false, auth_enabled: true, profile: null };
+  } catch {
+    cachedSession = { authenticated: false, auth_enabled: true, profile: null };
+  }
+  return cachedSession;
+}
+
+/** Synchronous read of the last /auth/session result (null before it has run). */
+export function getSession(): Session | null {
+  return cachedSession;
+}
+
+/** Forget the cached answer — call after logout or a fresh sign-in. */
+export function clearSessionCache(): void {
+  cachedSession = null;
 }
 
 export function getIdentity(): Identity | null {
-  // Prefer the userinfo profile (has email/name); fall back to id_token (sub only).
-  const stored = sessionStorage.getItem(PROFILE_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored) as Identity;
-    } catch {
-      /* fall through */
-    }
-  }
-  const idt = sessionStorage.getItem(IDTOKEN_KEY);
-  if (!idt) return null;
-  try {
-    const payload = idt.split('.')[1];
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    return JSON.parse(decodeURIComponent(escape(json))) as Identity;
-  } catch {
-    return null;
-  }
+  return cachedSession?.profile ?? null;
 }
 
 function clearPkce() {
@@ -125,6 +145,17 @@ function clearPkce() {
 
 // ── Flow ──────────────────────────────────────────────────────────────────────
 export async function beginLogin(): Promise<void> {
+  // Capture the current route BEFORE leaving for the IdP. sessionStorage
+  // survives the cross-origin round trip in the same tab (the PKCE verifier
+  // below relies on exactly that).
+  try {
+    // Drop any OIDC params already in the bar, so a retry cannot store a stale
+    // authorization code and replay it after the next round trip.
+    const q = new URLSearchParams(window.location.search);
+    for (const k of ['code', 'state', 'session_state', 'error', 'error_description']) q.delete(k);
+    const qs = q.toString();
+    sessionStorage.setItem(RETURN_KEY, safeReturnPath(window.location.pathname + (qs ? `?${qs}` : '')));
+  } catch { /* storage unavailable — fall back to the root */ }
   const cfg = await getAuthConfig();
   const verifier = randomString(48);
   const challenge = await sha256(verifier);
@@ -155,8 +186,11 @@ export async function completeLoginIfCallback(): Promise<boolean> {
     throw new Error('Invalid login state — please try again');
   }
   const cfg = await getAuthConfig();
+  // credentials:'include' so the Set-Cookie from the Core is stored — this is the
+  // only place the session is established.
   const res = await fetch('/auth/exchange', {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: cfg.redirect_uri }),
   });
@@ -166,23 +200,25 @@ export async function completeLoginIfCallback(): Promise<boolean> {
     throw new Error(e.detail || e.error || 'Login failed');
   }
   const data = await res.json();
-  sessionStorage.setItem(TOKEN_KEY, data.access_token);
-  if (data.id_token) sessionStorage.setItem(IDTOKEN_KEY, data.id_token);
-  if (data.profile) sessionStorage.setItem(PROFILE_KEY, JSON.stringify(data.profile));
-  if (data.expires_in) sessionStorage.setItem(TOKEN_EXP_KEY, String(Date.now() + Number(data.expires_in) * 1000));
+  // No tokens come back and none are stored. Seed the session cache from the
+  // exchange response so the first render already knows who is signed in.
+  cachedSession = { authenticated: true, auth_enabled: true, profile: data.profile ?? null };
   clearPkce();
-  // Strip ?code&state from the address bar.
-  window.history.replaceState({}, document.title, '/');
+  // Strip ?code&state from the address bar and land back on the route the user
+  // was on. BrowserRouter is a child of AuthGate, so it has not mounted yet —
+  // it will read this corrected URL on its first render, no navigation needed.
+  const returnTo = safeReturnPath(sessionStorage.getItem(RETURN_KEY));
+  sessionStorage.removeItem(RETURN_KEY);
+  window.history.replaceState({}, document.title, returnTo);
   return true;
 }
 
 export function logout(): void {
-  const idToken = sessionStorage.getItem(IDTOKEN_KEY);
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(TOKEN_EXP_KEY);
-  sessionStorage.removeItem(IDTOKEN_KEY);
-  sessionStorage.removeItem(PROFILE_KEY);
-  fetch('/auth/logout' + (idToken ? `?id_token_hint=${encodeURIComponent(idToken)}` : ''))
+  // The Core holds the id_token and clears the session cookies; the browser has
+  // nothing of its own to discard beyond the cached answer.
+  clearSessionCache();
+  sessionStorage.removeItem(RETURN_KEY);
+  fetch('/auth/logout', { credentials: 'include' })
     .then((r) => r.json())
     .then((d) => window.location.assign(d.end_session_url))
     .catch(() => window.location.assign('/'));
