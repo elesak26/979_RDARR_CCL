@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
+import { uploadFileFilter } from '../lib/uploadFilter';
 import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
@@ -111,7 +112,7 @@ const checklistStorage = multer.diskStorage({
     cb(null, `${Date.now()}_${safe}`);
   },
 });
-const checklistUpload = multer({ storage: checklistStorage, limits: { fileSize: 50 * 1024 * 1024 } });
+const checklistUpload = multer({ storage: checklistStorage, limits: { fileSize: 50 * 1024 * 1024 }, fileFilter: uploadFileFilter });
 
 const router = Router();
 
@@ -169,7 +170,7 @@ const MATERIAL_RISK_TO_961_BU: Record<string, string> = {
 // BU 961 is listed as three separate entries (one per material risk) rather than bare '961'.
 const QUESTION_BU_MAP: Record<number, string[]> = {
    1: ['966', '007-52'],
-   2: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956'],
+   2: ['966', '030', ...BU_961_SPLIT, '023', '908', '006', '956', '974'],
    3: ['966'],
    4: ['966'],
    5: ['966'],
@@ -612,7 +613,7 @@ router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextF
   try {
     const { id } = req.params;
     const result = await query(
-      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published') RETURNING id, name`,
+      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published')`,
       [id]
     );
     if (result.rows.length === 0) {

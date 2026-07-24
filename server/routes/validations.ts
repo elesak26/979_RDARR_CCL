@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
+import { uploadFileFilter } from '../lib/uploadFilter';
 import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
@@ -34,7 +35,7 @@ const valAttachStorage = multer.diskStorage({
     cb(null, `${Date.now()}_${safe}`);
   },
 });
-const valAttachUpload = multer({ storage: valAttachStorage, limits: { fileSize: 20 * 1024 * 1024 } });
+const valAttachUpload = multer({ storage: valAttachStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: uploadFileFilter });
 
 const router = Router();
 

@@ -17,12 +17,24 @@ function q(v: unknown): string {
 }
 
 async function main() {
+  // Credentials come from the environment. They used to be inline, which was
+  // harmless in practice — this script never runs inside a deployed image and
+  // the database is a local scratch copy — but a literal password in the
+  // repository is a finding regardless of how it is used, and explaining that
+  // to a scanner costs more than reading two variables.
+  const password = process.env.SEED_SOURCE_DB_PASSWORD;
+  if (!password) {
+    throw new Error(
+      'SEED_SOURCE_DB_PASSWORD is not set. Export it before running this one-shot ' +
+      'generator, e.g. SEED_SOURCE_DB_PASSWORD=... npx tsx scripts/gen-seeds.ts'
+    );
+  }
   const client = new Client({
-    host: 'localhost',
-    port: 5432,
-    database: 'ccl_tmp',
-    user: 'pf_admin',
-    password: 'pf_secret_2026',
+    host: process.env.SEED_SOURCE_DB_HOST || 'localhost',
+    port: parseInt(process.env.SEED_SOURCE_DB_PORT || '5432', 10),
+    database: process.env.SEED_SOURCE_DB_NAME || 'ccl_tmp',
+    user: process.env.SEED_SOURCE_DB_USER || 'pf_admin',
+    password,
   });
   await client.connect();
 

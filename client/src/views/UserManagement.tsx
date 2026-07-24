@@ -12,6 +12,14 @@ const ROLE_COLORS: Record<UserRole, { bg: string; color: string; border: string 
   'Viewer':           { bg: 'rgba(108,117,125,.1)', color: '#495057', border: 'rgba(108,117,125,.3)' },
 };
 
+interface GroupMapping {
+  id: number;
+  ad_group: string;
+  role: UserRole;
+  created_at?: string;
+  created_by?: string | null;
+}
+
 interface UserForm {
   display_name: string;
   role: UserRole;
@@ -73,7 +81,16 @@ export default function UserManagement() {
   const [historyFilterRole, setHistoryFilterRole] = useState('');
 
   // Tab
-  const [tab, setTab] = useState<'users' | 'history'>('users');
+  const [tab, setTab] = useState<'users' | 'history' | 'groups'>('users');
+
+  // AD group → role mappings (spec item 4 — configurable here, read by the auth
+  // middleware when Entra login is on).
+  const [mappings, setMappings] = useState<GroupMapping[]>([]);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [newGroup, setNewGroup] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('Responder');
+  const [mapSaving, setMapSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,8 +122,59 @@ export default function UserManagement() {
     }
   }, [historyFilterUser, historyFilterRole]);
 
+  const loadMappings = useCallback(async () => {
+    setMapLoading(true);
+    setMapError(null);
+    try {
+      setMappings(await api.get<GroupMapping[]>('/group-mappings'));
+    } catch (e) {
+      setMapError(e instanceof Error ? e.message : 'Failed to load group mappings');
+    } finally {
+      setMapLoading(false);
+    }
+  }, []);
+
+  async function addMapping(e: React.FormEvent) {
+    e.preventDefault();
+    const ad_group = newGroup.trim();
+    if (!ad_group) return;
+    setMapSaving(true);
+    setMapError(null);
+    try {
+      await api.post('/group-mappings', { ad_group, role: newRole });
+      setNewGroup('');
+      setNewRole('Responder');
+      await loadMappings();
+    } catch (e) {
+      setMapError(e instanceof Error ? e.message : 'Failed to add mapping');
+    } finally {
+      setMapSaving(false);
+    }
+  }
+
+  async function changeMappingRole(id: number, role: UserRole) {
+    setMapError(null);
+    try {
+      await api.put(`/group-mappings/${id}`, { role });
+      await loadMappings();
+    } catch (e) {
+      setMapError(e instanceof Error ? e.message : 'Failed to update mapping');
+    }
+  }
+
+  async function deleteMapping(id: number) {
+    setMapError(null);
+    try {
+      await api.delete(`/group-mappings/${id}`);
+      await loadMappings();
+    } catch (e) {
+      setMapError(e instanceof Error ? e.message : 'Failed to delete mapping');
+    }
+  }
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (tab === 'history') loadHistory(); }, [tab, loadHistory]);
+  useEffect(() => { if (tab === 'groups') loadMappings(); }, [tab, loadMappings]);
 
   function openAdd() {
     setEditingUser(null);
@@ -213,7 +281,7 @@ export default function UserManagement() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '2px solid var(--line)' }}>
-        {(['users', 'history'] as const).map(t => (
+        {(['users', 'history', 'groups'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -225,7 +293,7 @@ export default function UserManagement() {
               marginBottom: -2,
             }}
           >
-            {t === 'users' ? 'Users & Permissions' : 'Login History'}
+            {t === 'users' ? 'Users & Permissions' : t === 'history' ? 'Login History' : 'AD Group Mapping'}
           </button>
         ))}
       </div>
@@ -405,6 +473,87 @@ export default function UserManagement() {
                     <td><strong>{entry.display_name}</strong></td>
                     <td><RoleBadge role={entry.role} /></td>
                     <td style={{ fontFamily: 'monospace', color: 'var(--muted)' }}>{entry.ip_address ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── AD Group Mapping tab ── */}
+      {tab === 'groups' && (
+        <div>
+          <div className="small" style={{ color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>
+            Map each Azure AD group to a single application role. When a user signs in, the role
+            comes from the one mapped group they belong to. A user in more than one mapped group is
+            blocked until all but one is removed. Global administrators are configured separately and
+            are not listed here.
+          </div>
+
+          {mapError && (
+            <div style={{ color: 'var(--danger)', marginBottom: 12, padding: '8px 12px', background: 'rgba(220,53,69,.08)', borderRadius: 6, border: '1px solid var(--danger)' }}>
+              {mapError}
+            </div>
+          )}
+
+          {/* Add a mapping */}
+          <form onSubmit={addMapping} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 260 }}>
+              <span className="small" style={{ color: 'var(--muted)' }}>AD group (object-id or name)</span>
+              <input
+                value={newGroup}
+                onChange={e => setNewGroup(e.target.value)}
+                placeholder="e.g. RDARR-CCL-Validator-PROD"
+                style={{ padding: '6px 10px' }}
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span className="small" style={{ color: 'var(--muted)' }}>Role</span>
+              <select value={newRole} onChange={e => setNewRole(e.target.value as UserRole)} style={{ minWidth: 160, padding: '6px 10px' }}>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <button className="btn primary" type="submit" disabled={mapSaving || !newGroup.trim()}>
+              {mapSaving ? 'Adding…' : '+ Add Mapping'}
+            </button>
+          </form>
+
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>AD Group</th>
+                  <th style={{ width: 200 }}>Role</th>
+                  <th style={{ width: 90 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {mapLoading && <tr><td colSpan={3} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
+                {!mapLoading && mappings.length === 0 && (
+                  <tr><td colSpan={3} className="small" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)' }}>No mappings yet. Add one above.</td></tr>
+                )}
+                {!mapLoading && mappings.map(m => (
+                  <tr key={m.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{m.ad_group}</td>
+                    <td>
+                      <select
+                        value={m.role}
+                        onChange={e => changeMappingRole(m.id, e.target.value as UserRole)}
+                        style={{ padding: '4px 8px' }}
+                      >
+                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className="btn"
+                        onClick={() => deleteMapping(m.id)}
+                        style={{ color: 'var(--danger)', padding: '2px 10px' }}
+                      >
+                        Remove
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

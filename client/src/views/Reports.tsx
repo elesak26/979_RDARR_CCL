@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getCurrentUserId } from '../api/client';
-import type { Cycle, User } from '../types';
+import { api, downloadLinkProps } from '../api/client';
+import type { Cycle, User, UserRole } from '../types';
 import { useBuNames } from '../hooks/useBuNames';
 import { displayFileName } from '../utils/displayFileName';
 import AdminAnalytics from './AdminAnalytics';
@@ -196,7 +196,19 @@ interface AuditEntry {
 }
 
 const ENTITY_TYPES = ['All', 'cycle', 'response', 'validation', 'attachment', 'user'] as const;
-const ACTOR_ROLES = ['All', 'Admin', 'Validator', 'Senior Validator', 'Respondent'] as const;
+// These are matched verbatim against audit_log.actor_role on the server, so they
+// must be the role names the Core actually writes — 'Responder', not 'Respondent'.
+// The typo made the filter return an empty list every time, which read as "the
+// deployment loses BU responses" when in fact all of them were recorded. Typed
+// against UserRole so a future misspelling fails the build.
+const ACTOR_ROLES: readonly ('All' | UserRole)[] =
+  ['All', 'Admin', 'Senior Validator', 'Validator', 'Responder', 'Viewer'];
+
+// The server caps limit at 2000. Ask for the cap rather than 500: the table is
+// the only view of the audit trail and a silently-truncated one is worse than a
+// slow one. When a result comes back at exactly this size it is almost certainly
+// cut off, and the UI says so.
+const AUDIT_LIMIT = 2000;
 
 const SCORE_LABELS: Record<number, string> = {
   1: 'Non-compliant',
@@ -421,6 +433,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [auditActorId, setAuditActorId] = useState<string>('All');
   const [auditDateFrom, setAuditDateFrom] = useState<string>('');
   const [auditDateTo, setAuditDateTo] = useState<string>('');
+  // Actor dropdown from the full user list, not the audit rows on screen —
+  // otherwise it only offers people in the newest page, missing the BU
+  // respondents precisely when you need to look them up.
+  const [auditUsers, setAuditUsers] = useState<User[]>([]);
+  // Kept separate from `error`: a failed download must not blank out the report.
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   const auditTableRef = useRef<HTMLDivElement>(null);
@@ -481,11 +499,16 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     if (auditCycleId) params.set('cycle_id', auditCycleId);
     if (auditEntityType !== 'All') params.set('entity_type', auditEntityType);
     if (auditActorRole !== 'All') params.set('actor_role', auditActorRole);
-    if (auditDateFrom) params.set('from', auditDateFrom);
-    if (auditDateTo) params.set('to', auditDateTo);
-    params.set('limit', '500');
+    // actor_id server-side too. It used to be applied in the browser over the
+    // rows already fetched, so picking a person could only narrow the newest page.
+    if (auditActorId !== 'All') params.set('actor_id', auditActorId);
+    // from_date/to_date — the names routes/audit.ts destructures. Sending
+    // from/to meant the date range was silently dropped.
+    if (auditDateFrom) params.set('from_date', auditDateFrom);
+    if (auditDateTo) params.set('to_date', auditDateTo);
+    params.set('limit', String(AUDIT_LIMIT));
     return params;
-  }, [auditCycleId, auditEntityType, auditActorRole, auditDateFrom, auditDateTo]);
+  }, [auditCycleId, auditEntityType, auditActorRole, auditActorId, auditDateFrom, auditDateTo]);
 
   const loadAuditLog = useCallback(async () => {
     setAuditLoading(true);
@@ -506,6 +529,11 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   }, [currentUser, loadAuditLog]);
 
   useEffect(() => {
+    if (currentUser?.role !== 'Admin') return;
+    api.get<User[]>('/users').then(setAuditUsers).catch(() => setAuditUsers([]));
+  }, [currentUser]);
+
+  useEffect(() => {
     if (adminTab !== 'audit') return;
     const measure = () => {
       if (auditTableRef.current) {
@@ -521,9 +549,10 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const handleAuditExportCsv = () => {
     const params = buildAuditParams();
     params.set('format', 'csv');
-    const userId = getCurrentUserId();
-    if (userId) params.set('_user', userId);
-    window.open(`/api/audit-log?${params.toString()}`, '_blank');
+    // api.download sends the auth headers on the request; window.open / <a href>
+    // navigations cannot, so they returned a 401 the browser saved as excel.json.
+    api.download(`/audit-log?${params.toString()}`, 'audit-log.csv')
+      .catch(e => setAuditError(e instanceof Error ? e.message : 'Export failed'));
   };
 
   if (loadingCycles) return <div className="small" style={{ padding: 24 }}>Loading reports…</div>;
@@ -754,19 +783,10 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             <button
               className="btn"
               onClick={() => {
-                const userId = getCurrentUserId();
-                const headers: Record<string, string> = {};
-                if (userId) headers['X-User-Id'] = userId;
-                fetch(`/api/cycles/${selectedCycle.id}/checklist`, { headers })
-                  .then(r => r.blob())
-                  .then(blob => {
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = selectedCycle.checklist_original_name ?? `${selectedCycle.name}_checklist.xlsx`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  });
+                api.download(
+                  `/cycles/${selectedCycle.id}/checklist`,
+                  selectedCycle.checklist_original_name ?? `${selectedCycle.name}_checklist.xlsx`
+                ).catch(e => setDownloadError(e instanceof Error ? e.message : 'Download failed'));
               }}
               title="Download compliance checklist"
               style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
@@ -799,14 +819,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             <button
               className="btn"
               onClick={() => {
-                const userId = getCurrentUserId();
-                const url = `/api/reporting/cycle/${selectedCycle.id}/export/excel`;
-                const a = document.createElement('a');
-                a.href = userId ? `${url}?_user=${encodeURIComponent(userId)}` : url;
-                a.download = '';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+                // The ?_user= query param was a workaround for X-User-Id not
+                // surviving an <a href> navigation; api.download sends the real
+                // headers, so it is no longer needed.
+                api.download(
+                  `/reporting/cycle/${selectedCycle.id}/export/excel`,
+                  `CCL_Validation_Scores_${selectedCycle.name}_${selectedCycle.year}.xlsx`
+                ).catch(e => setDownloadError(e instanceof Error ? e.message : 'Download failed'));
               }}
               title="Download validation scores as Excel file"
               style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
@@ -822,6 +841,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           )}
         </div>
       </div>
+
+      {downloadError && (
+        <div style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 6, background: 'var(--danger-bg, #fdecec)', color: 'var(--danger)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ flex: 1 }}>Download failed: {downloadError}</span>
+          <button className="btn" onClick={() => setDownloadError(null)} style={{ padding: '2px 8px' }}>Dismiss</button>
+        </div>
+      )}
 
       {!selectedCycleId && (
         <div style={{ padding: 48, textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>
@@ -1814,16 +1840,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
               <span className="small" style={{ color: 'var(--muted)' }}>Actor</span>
               <select value={auditActorId} onChange={e => setAuditActorId(e.target.value)} style={{ minWidth: 180 }}>
                 <option value="All">All actors</option>
-                {Array.from(
-                  new Map(
-                    auditEntries
-                      .filter(e => e.actor_id != null)
-                      .map(e => [e.actor_id, e.actor_name ?? e.actor_id])
-                  ).entries()
-                )
-                  .sort((a, b) => (a[1] ?? '').localeCompare(b[1] ?? ''))
-                  .map(([id, name]) => (
-                    <option key={id} value={id!}>{name}</option>
+                {auditUsers
+                  .filter(u => auditActorRole === 'All' || u.role === auditActorRole)
+                  .map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.display_name}{u.is_active === false ? ' (inactive)' : ''}
+                    </option>
                   ))}
               </select>
             </div>
@@ -1844,6 +1866,13 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           {auditError && (
             <div style={{ color: 'var(--danger)', marginBottom: 12, padding: '8px 12px', background: 'rgba(220,53,69,.08)', borderRadius: 6, border: '1px solid var(--danger)' }}>
               {auditError}
+            </div>
+          )}
+
+          {!auditLoading && auditEntries.length >= AUDIT_LIMIT && (
+            <div className="small" style={{ marginBottom: 12, padding: '8px 12px', background: 'rgba(255,193,7,.12)', borderRadius: 6, border: '1px solid var(--warn, #ffc107)' }}>
+              Showing the most recent {AUDIT_LIMIT.toLocaleString()} entries — there are older ones that are not listed.
+              Narrow the range with the cycle, role, actor or date filters to see them.
             </div>
           )}
 
@@ -1875,11 +1904,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 {auditLoading && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
                 {!auditLoading && auditEntries.length === 0 && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No audit entries found.</td></tr>}
                 {!auditLoading && auditEntries.length > 0 && (() => {
-                  const filtered = auditEntries.filter(e => auditActorId === 'All' || e.actor_id === auditActorId);
-                  if (filtered.length === 0) {
-                    return <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No entries match the selected actor.</td></tr>;
-                  }
-                  return filtered.map(entry => {
+                  // actor_id is a server-side filter now, so these rows are already
+                  // the final set — no second pass in the browser.
+                  return auditEntries.map(entry => {
                   const d = entry.details ?? {};
 
                   const ACTION_LABELS: Record<string, string> = {
@@ -1969,7 +1996,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                       </td>
                       <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={displayFileName(file)}>
                         {file
-                          ? <a href={`/api/audit-log/${entry.id}/file`} download={file} style={{ color: 'var(--accent)', textDecoration: 'underline' }}>{displayFileName(file)}</a>
+                          ? <a {...downloadLinkProps(`/audit-log/${entry.id}/file`, file, setAuditError)} style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}>{displayFileName(file)}</a>
                           : <span style={{ color: 'var(--muted)' }}>—</span>
                         }
                       </td>

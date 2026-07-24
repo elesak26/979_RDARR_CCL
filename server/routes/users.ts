@@ -11,8 +11,19 @@ function parseUnitCodes<T extends { unit_codes?: unknown }>(row: T): T {
   return row;
 }
 
-// GET /api/users — list all users (with last login)
-router.get('/api/users', async (_req: Request, res: Response, next: NextFunction) => {
+// GET /api/users — list all users (with last login for Admins)
+//
+// This cannot be Admin-only today: the persona dropdown and the BU-code → name
+// lookup are both built from this list, and both run for every role. What it can
+// do is stop handing out login history to everyone — only User Management shows
+// that column and it is already Admin-gated, so withholding it for non-Admins
+// costs nothing and removes a "who was working when" signal from every caller.
+//
+// The full restriction belongs with the removal of the persona dropdown: once
+// the acting user comes from the token, no non-Admin screen needs the directory
+// at all and this endpoint becomes Admin-only outright.
+router.get('/api/users', async (req: Request, res: Response, next: NextFunction) => {
+  const isAdmin = req.user?.role === 'Admin';
   try {
     const result = await query<{ unit_codes?: unknown }>(
       `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
@@ -21,7 +32,15 @@ router.get('/api/users', async (_req: Request, res: Response, next: NextFunction
                WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC LIMIT 1) AS last_login_at
        FROM users u ORDER BY u.display_name`
     );
-    res.json(result.rows.map(parseUnitCodes));
+    const rows = result.rows.map(parseUnitCodes);
+    res.json(
+      isAdmin
+        ? rows
+        : rows.map((r) => {
+            const { last_login_at: _omitted, ...rest } = r as Record<string, unknown>;
+            return rest;
+          })
+    );
   } catch (err) {
     next(err);
   }
