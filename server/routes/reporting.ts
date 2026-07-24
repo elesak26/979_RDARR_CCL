@@ -216,9 +216,12 @@ router.get(
         [cycleId]
       );
 
-      // ── Scores by BU (avg compliance_score per bu_code) ──────────────────
-      // BUs 023 and 006-956 are split by material_risk so each material risk
-      // appears as a separate row (same treatment as 961-Market/Liquidity/IRRBB).
+      // ── Scores by BU ─────────────────────────────────────────────────────
+      // Three-stage avg:
+      //   Stage 1 (per_question_bu): one score per (bu_code, material_risk, question_id)
+      //   Stage 2 (per_risk_bu):     avg of per-question scores per (bu_code, material_risk) — sub-row score
+      //   Stage 3 (outer SELECT):    avg of per-risk scores per bu_code — aggregate row score
+      // BUs 023 and 006-956 are split by material_risk so each appears as a separate sub-row.
       const byBuResult = await query<{
         bu_code: string;
         material_risk: string | null;
@@ -233,38 +236,43 @@ router.get(
              r.bu_code,
              CASE WHEN r.bu_code IN ('023', '006-956') THEN r.material_risk ELSE NULL END AS material_risk,
              r.question_id,
-             -- counts from responses only (no join fan-out)
-             COUNT(r.id)                                                                     AS r_count,
-             COUNT(CASE WHEN r.status = 'submitted' THEN r.id END)                          AS r_submitted,
-             AVG(CASE WHEN r.status = 'submitted' THEN r.compliance_score::numeric END)       AS compliance_score
+             COUNT(r.id)                                                              AS r_count,
+             COUNT(CASE WHEN r.status = 'submitted' THEN r.id END)                   AS r_submitted,
+             AVG(CASE WHEN r.status = 'submitted' THEN r.compliance_score::numeric END) AS compliance_score,
+             AVG(CASE WHEN r.status = 'submitted' THEN v.validation_score::numeric END) AS validation_score,
+             MAX(CASE WHEN r.status = 'submitted' AND v.validation_score IS NOT NULL THEN 1 ELSE 0 END) AS has_validation
            FROM responses r
+           LEFT JOIN validations v
+             ON v.cycle_id = r.cycle_id AND v.question_id = r.question_id AND v.bu_code = r.bu_code
+             AND (v.material_risk = r.material_risk OR (v.material_risk IS NULL AND r.material_risk IS NULL))
            WHERE r.cycle_id = $1
            GROUP BY r.bu_code,
                     CASE WHEN r.bu_code IN ('023', '006-956') THEN r.material_risk ELSE NULL END,
                     r.question_id
          ),
-         per_question_val AS (
+         per_risk_bu AS (
            SELECT
-             v.bu_code,
-             v.question_id,
-             AVG(v.validation_score::numeric)                                        AS validation_score,
-             MAX(CASE WHEN v.validation_score IS NOT NULL THEN 1 ELSE 0 END)       AS has_validation
-           FROM validations v
-           WHERE v.cycle_id = $1
-           GROUP BY v.bu_code, v.question_id
+             bu_code,
+             material_risk,
+             AVG(compliance_score)        AS avg_compliance_score,
+             AVG(validation_score)        AS avg_validation_score,
+             SUM(r_count)                 AS response_count,
+             SUM(r_submitted)             AS submitted_count,
+             SUM(has_validation)          AS validated_count
+           FROM per_question_bu
+           GROUP BY bu_code, material_risk
          )
          SELECT
-           p.bu_code,
-           p.material_risk,
-           ROUND(AVG(p.compliance_score)::numeric, 2)   AS avg_compliance_score,
-           ROUND(AVG(pv.validation_score)::numeric, 2)  AS avg_validation_score,
-           SUM(p.r_count)                               AS response_count,
-           SUM(p.r_submitted)                           AS submitted_count,
-           SUM(COALESCE(pv.has_validation, 0))          AS validated_count
-         FROM per_question_bu p
-         LEFT JOIN per_question_val pv ON pv.bu_code = p.bu_code AND pv.question_id = p.question_id
-         GROUP BY p.bu_code, p.material_risk
-         ORDER BY p.bu_code, p.material_risk NULLS FIRST`,
+           bu_code,
+           material_risk,
+           ROUND(AVG(avg_compliance_score)::numeric, 2) AS avg_compliance_score,
+           ROUND(AVG(avg_validation_score)::numeric, 2) AS avg_validation_score,
+           SUM(response_count)::bigint                  AS response_count,
+           SUM(submitted_count)::bigint                 AS submitted_count,
+           SUM(validated_count)::bigint                 AS validated_count
+         FROM per_risk_bu
+         GROUP BY bu_code, material_risk
+         ORDER BY bu_code, material_risk NULLS FIRST`,
         [cycleId]
       );
 
