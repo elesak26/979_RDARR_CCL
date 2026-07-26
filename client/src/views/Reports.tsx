@@ -5,7 +5,7 @@ import { useBuNames } from '../hooks/useBuNames';
 import { displayFileName } from '../utils/displayFileName';
 import AdminAnalytics from './AdminAnalytics';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   RadarChart, PolarGrid, PolarAngleAxis, Radar, Cell, Legend,
 } from 'recharts';
 
@@ -546,12 +546,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
     return () => { cancelAnimationFrame(id); window.removeEventListener('resize', measure); };
   }, [adminTab]);
 
-  const handleAuditExportCsv = () => {
+  const handleAuditExportExcel = () => {
     const params = buildAuditParams();
-    params.set('format', 'csv');
-    // api.download sends the auth headers on the request; window.open / <a href>
-    // navigations cannot, so they returned a 401 the browser saved as excel.json.
-    api.download(`/audit-log?${params.toString()}`, 'audit-log.csv')
+    api.download(`/audit-log/export/excel?${params.toString()}`, 'RVMT_Audit_Log.xlsx')
       .catch(e => setAuditError(e instanceof Error ? e.message : 'Export failed'));
   };
 
@@ -1282,7 +1279,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                     <BarChart
                       data={barChartData}
                       layout="vertical"
-                      margin={{ top: 4, right: 48, left: 8, bottom: 4 }}
+                      margin={{ top: 4, right: 56, left: 8, bottom: 4 }}
                       barGap={4} barCategoryGap="30%"
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false} />
@@ -1311,8 +1308,16 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                         align="right"
                         wrapperStyle={{ fontSize: 13, fontWeight: 600, paddingLeft: 12 }}
                       />
-                      <Bar dataKey="Respondent Assessment" fill="var(--accent)" radius={[0, 4, 4, 0]} />
-                      <Bar dataKey="Validation" fill="var(--ok)" radius={[0, 4, 4, 0]} />
+                      <Bar dataKey="Respondent Assessment" fill="var(--accent)" radius={[0, 4, 4, 0]}>
+                        <LabelList dataKey="Respondent Assessment" position="right"
+                          formatter={(v: number) => v.toFixed(2)}
+                          style={{ fontSize: 11, fontWeight: 700, fill: 'var(--accent)' }} />
+                      </Bar>
+                      <Bar dataKey="Validation" fill="var(--ok)" radius={[0, 4, 4, 0]}>
+                        <LabelList dataKey="Validation" position="right"
+                          formatter={(v: number) => v.toFixed(2)}
+                          style={{ fontSize: 11, fontWeight: 700, fill: 'var(--ok)' }} />
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1860,7 +1865,12 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             <button className="btn" onClick={loadAuditLog} disabled={auditLoading} style={{ alignSelf: 'flex-end' }}>
               {auditLoading ? 'Loading…' : 'Apply'}
             </button>
-            <button className="btn" onClick={handleAuditExportCsv} style={{ alignSelf: 'flex-end' }}>Export CSV</button>
+            <button className="btn" onClick={handleAuditExportExcel} style={{ alignSelf: 'flex-end', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export Excel
+            </button>
           </div>
 
           {auditError && (

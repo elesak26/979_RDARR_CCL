@@ -283,8 +283,7 @@ export default function ValidationDetail() {
 
   // Justification and Additional Controls are Validator-only
   const canEditFields = isValidator && (isInReview || isRejected);
-  // Attachments and other actions still available to Senior Validators on pending_approval
-  const canEdit = canEditFields || (isSeniorValidator && isPendingApproval);
+  const canEdit = canEditFields;
   // Score can only be changed by Validators — Senior Validators see it read-only
   const canEditScore = isValidator && (isInReview || isRejected);
   const hasReturnedResponses = responses.some(r => r.status === 'returned');

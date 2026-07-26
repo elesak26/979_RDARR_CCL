@@ -273,7 +273,7 @@ router.post(
 router.put(
   '/api/cycles/:cycleId/responses/:id/return',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'Validator' && req.user?.role !== 'Admin') {
+    if (req.user?.role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }

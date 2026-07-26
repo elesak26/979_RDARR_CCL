@@ -100,6 +100,11 @@ async function exportOverviewToPdf(el: HTMLElement, filename: string, cycleName:
 }
 
 
+interface RejectModal {
+  question_id: number;
+  item_number: number;
+}
+
 export default function ValidationOverview() {
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [rows, setRows] = useState<OverviewRow[]>([]);
@@ -109,6 +114,10 @@ export default function ValidationOverview() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const overviewRef = useRef<HTMLDivElement>(null);
+  const [bulkActing, setBulkActing] = useState<number | null>(null);
+  const [rejectModal, setRejectModal] = useState<RejectModal | null>(null);
+  const [rejectComment, setRejectComment] = useState('');
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const cycleIdParam = searchParams.get('cycle');
   const selectedCycleId = cycleIdParam ? parseInt(cycleIdParam, 10) : null;
@@ -143,6 +152,36 @@ export default function ValidationOverview() {
     if (selectedCycleId) loadOverview(selectedCycleId);
     else setRows([]);
   }, [selectedCycleId, loadOverview]);
+
+  async function handleBulkApprove(questionId: number) {
+    if (!selectedCycleId) return;
+    setBulkActing(questionId);
+    setBulkError(null);
+    try {
+      await api.put(`/cycles/${selectedCycleId}/questions/${questionId}/approve`);
+      await loadOverview(selectedCycleId);
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : 'Approve failed');
+    } finally {
+      setBulkActing(null);
+    }
+  }
+
+  async function handleBulkReject() {
+    if (!selectedCycleId || !rejectModal) return;
+    setBulkActing(rejectModal.question_id);
+    setBulkError(null);
+    try {
+      await api.put(`/cycles/${selectedCycleId}/questions/${rejectModal.question_id}/reject`, { rejection_comment: rejectComment.trim() });
+      setRejectModal(null);
+      setRejectComment('');
+      await loadOverview(selectedCycleId);
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : 'Reject failed');
+    } finally {
+      setBulkActing(null);
+    }
+  }
 
   // Group: thematic_area → bcbs_principle_name → requirement → question
   const byArea = new Map<string, Map<string, Map<string, QuestionGroup[]>>>();
@@ -254,6 +293,12 @@ export default function ValidationOverview() {
         </div>
       )}
 
+      {bulkError && (
+        <div style={{ color: 'var(--danger)', padding: '8px 12px', marginBottom: 12, background: 'rgba(220,53,69,.08)', borderRadius: 6, border: '1px solid var(--danger)', fontSize: 13 }}>
+          {bulkError}
+        </div>
+      )}
+
       {!loading && !error && byArea.size > 0 && (
         <div ref={overviewRef} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {Array.from(byArea.entries()).map(([area, byPrinciple]) => (
@@ -306,7 +351,7 @@ export default function ValidationOverview() {
                               {req}
                             </div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                             <ScoreBadge score={group.consolidated_score} />
                             {group.rows.every(r => r.status === 'closed') ? (
                               <span style={{
@@ -317,13 +362,37 @@ export default function ValidationOverview() {
                                 Approved
                               </span>
                             ) : (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center',
-                                background: '#f08c0018', border: '1px solid #f08c0055',
-                                borderRadius: 6, padding: '2px 10px', fontSize: 12, fontWeight: 700, color: '#f08c00',
-                              }}>
-                                Pending Approval
-                              </span>
+                              <>
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center',
+                                  background: '#f08c0018', border: '1px solid #f08c0055',
+                                  borderRadius: 6, padding: '2px 10px', fontSize: 12, fontWeight: 700, color: '#f08c00',
+                                }}>
+                                  Pending Approval
+                                </span>
+                                {selectedCycle?.status === 'distributed' && (
+                                  <>
+                                    <button
+                                      className="btn"
+                                      style={{ fontSize: 12, padding: '4px 10px', background: '#2f9e44', color: '#fff', border: 'none' }}
+                                      disabled={bulkActing === group.question_id}
+                                      onClick={() => handleBulkApprove(group.question_id)}
+                                      title="Approve all BU validations for this item"
+                                    >
+                                      {bulkActing === group.question_id ? '…' : 'Approve all'}
+                                    </button>
+                                    <button
+                                      className="btn danger"
+                                      style={{ fontSize: 12, padding: '4px 10px' }}
+                                      disabled={bulkActing === group.question_id}
+                                      onClick={() => { setBulkError(null); setRejectComment(''); setRejectModal({ question_id: group.question_id, item_number: group.item_number }); }}
+                                      title="Reject all BU validations for this item"
+                                    >
+                                      Reject all
+                                    </button>
+                                  </>
+                                )}
+                              </>
                             )}
                             <button
                               className="btn primary"
@@ -341,6 +410,58 @@ export default function ValidationOverview() {
               ))}
             </div>
           ))}
+        </div>
+      )}
+      {/* Reject all modal */}
+      {rejectModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}
+          onClick={e => { if (e.target === e.currentTarget) { setRejectModal(null); setRejectComment(''); } }}
+        >
+          <div style={{
+            background: 'var(--bg)', borderRadius: 10, padding: '28px 28px 24px',
+            width: 440, maxWidth: '92vw', boxShadow: '0 8px 40px rgba(0,0,0,.3)',
+          }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: 17, color: 'var(--danger)' }}>Reject all — Item #{rejectModal.item_number}</h2>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>
+              All pending BU validations for this item will be rejected and returned to the Validator.
+            </p>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                Rejection comment <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>
+              </label>
+              <textarea
+                autoFocus
+                rows={4}
+                value={rejectComment}
+                onChange={e => setRejectComment(e.target.value)}
+                placeholder="Explain what needs to be revised…"
+                style={{
+                  width: '100%', padding: '8px 10px', fontSize: 13,
+                  border: '1px solid var(--line)', borderRadius: 6,
+                  background: 'var(--input-bg)', color: 'var(--text)',
+                  resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            {bulkError && (
+              <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>{bulkError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => { setRejectModal(null); setRejectComment(''); setBulkError(null); }}>
+                Cancel
+              </button>
+              <button
+                className="btn danger"
+                disabled={bulkActing === rejectModal.question_id}
+                onClick={handleBulkReject}
+              >
+                {bulkActing === rejectModal.question_id ? 'Rejecting…' : 'Reject all'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

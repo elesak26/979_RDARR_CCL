@@ -126,7 +126,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Validator' && role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -188,7 +188,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id/close',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Validator' && role !== 'Admin') {
+    if (role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -246,7 +246,7 @@ router.get(
   '/api/cycles/:cycleId/validation-overview',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -349,7 +349,7 @@ router.put(
   '/api/cycles/:cycleId/questions/:questionId/approve',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -412,7 +412,7 @@ router.put(
   '/api/cycles/:cycleId/questions/:questionId/reject',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -470,7 +470,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id/approve',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -539,7 +539,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id/reject',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator' && role !== 'Admin') {
+    if (role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -612,12 +612,12 @@ router.get(
   }
 );
 
-// POST /api/cycles/:cycleId/validations/:id/attachments — Validator or Senior Validator
+// POST /api/cycles/:cycleId/validations/:id/attachments — Validator only
 router.post(
   '/api/cycles/:cycleId/validations/:id/attachments',
   valAttachUpload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'Validator' && req.user?.role !== 'Senior Validator') {
+    if (req.user?.role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -663,11 +663,11 @@ router.post(
   }
 );
 
-// DELETE /api/cycles/:cycleId/validations/:id/attachments/:attachId — Validator or Senior Validator
+// DELETE /api/cycles/:cycleId/validations/:id/attachments/:attachId — Validator only
 router.delete(
   '/api/cycles/:cycleId/validations/:id/attachments/:attachId',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (req.user?.role !== 'Validator' && req.user?.role !== 'Senior Validator') {
+    if (req.user?.role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }

@@ -604,30 +604,48 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
   }
 });
 
-// DELETE /api/cycles/:id — delete a draft or published cycle (Admin only)
+// DELETE /api/cycles/:id
+// draft     → Admin only
+// published → Validator only
+// distributed (Active) → Senior Validator only
 router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Admin') {
-    res.status(403).json({ error: 'Forbidden' });
-    return;
-  }
+  const role = req.user?.role;
   try {
     const { id } = req.params;
-    const result = await query(
-      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published')`,
+
+    // Fetch the current status first so we can enforce per-status role rules
+    const cycleRes = await query<{ status: string; name: string }>(
+      `SELECT status, name FROM questionnaire_cycles WHERE id = $1`,
       [id]
     );
-    if (result.rows.length === 0) {
-      res.status(400).json({ error: 'Cycle not found or cannot be deleted in its current status' });
+    if (cycleRes.rows.length === 0) {
+      res.status(404).json({ error: 'Cycle not found' });
       return;
     }
-    logAudit({ action: 'cycle_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { name: result.rows[0].name } });
+    const { status, name } = cycleRes.rows[0];
+
+    const allowed =
+      (status === 'draft'       && role === 'Admin') ||
+      (status === 'published'   && role === 'Validator') ||
+      (status === 'distributed' && role === 'Senior Validator');
+
+    if (!allowed) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
+    const result = await query(
+      `DELETE FROM questionnaire_cycles WHERE id = $1 RETURNING id, name`,
+      [id]
+    );
+    logAudit({ action: 'cycle_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { name } });
     res.json({ deleted: true, id: result.rows[0].id, name: result.rows[0].name });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/cycles/:id/checklist — upload checklist file (Admin or Validator on draft cycles)
+// POST /api/cycles/:id/checklist — upload checklist file (Validator only, draft cycles)
 router.post(
   '/api/cycles/:id/checklist',
   checklistUpload.single('file'),

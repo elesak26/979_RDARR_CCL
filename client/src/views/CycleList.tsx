@@ -487,8 +487,14 @@ export default function CycleList({ currentUser }: Props) {
                         </button>
                       )}
 
-                      {/* Admin: delete draft or published cycle */}
-                      {role === 'Admin' && (c.status === 'draft' || c.status === 'published') && (
+                      {/* Delete buttons: role+status gated */}
+                      {role === 'Admin' && c.status === 'draft' && (
+                        <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
+                      )}
+                      {role === 'Validator' && c.status === 'published' && (
+                        <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
+                      )}
+                      {role === 'Senior Validator' && c.status === 'distributed' && (
                         <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
                       )}
 
