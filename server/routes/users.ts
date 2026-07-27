@@ -172,8 +172,9 @@ router.put('/api/users/:id/toggle-active', async (req: Request, res: Response, n
       return;
     }
     const result = await query(
-      `UPDATE users SET is_active = CASE WHEN is_active = true THEN 0 ELSE 1 END
-       RETURNING id, display_name, role, is_activeWHERE id = $1`,
+      `UPDATE users SET is_active = NOT is_active
+       WHERE id = $1
+       RETURNING id, display_name, role, is_active`,
       [id]
     );
     if (result.rows.length === 0) {
