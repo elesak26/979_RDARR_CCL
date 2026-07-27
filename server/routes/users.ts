@@ -51,10 +51,8 @@ router.get('/api/users/me', (req: Request, res: Response) => {
   res.json(req.user ?? null);
 });
 
-function validateRoleCombination(role: string, secondaryRole?: string | null): string | null {
-  if (!secondaryRole) return null;
-  if (role !== 'Admin') return 'Only Admin users may have a secondary role';
-  if (secondaryRole !== 'Validator') return 'The only allowed secondary role is Validator';
+function validateRoleCombination(_role: string, secondaryRole?: string | null): string | null {
+  if (secondaryRole) return 'Combined roles are not allowed; each user must have exactly one role';
   return null;
 }
 

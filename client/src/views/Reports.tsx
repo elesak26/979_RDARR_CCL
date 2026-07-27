@@ -419,7 +419,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   const [loadingCycles, setLoadingCycles] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [adminTab, setAdminTab] = useState<'analytics' | 'audit'>('analytics');
+  const [adminTab, setAdminTab] = useState<'analytics' | 'reports' | 'audit'>('analytics');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [expandedBus, setExpandedBus] = useState<Set<string>>(new Set());
 
@@ -711,7 +711,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   return (
     <div ref={reportRef}>
       {/* ── Header ── */}
-      {!(currentUser?.role === 'Admin' && adminTab === 'audit') && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
+      {!(currentUser?.role === 'Admin' && adminTab !== 'reports') && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <div>
           {!embedded && <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Reports</div>}
           {selectedCycle && (
@@ -729,7 +729,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {!embedded && currentUser?.role !== 'Admin' && (
+          {!embedded && (currentUser?.role !== 'Admin' || adminTab === 'reports') && (
             <>
               <label className="small" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>Cycle</label>
               <select
@@ -862,10 +862,10 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
         </div>
       )}
 
-      {summary && selectedCycle && !(currentUser?.role === 'Admin' && adminTab === 'audit') && (
+      {summary && selectedCycle && !(currentUser?.role === 'Admin' && adminTab !== 'reports') && (
         <>
-          {/* ── Completion overview (non-Admin only) ── */}
-          {currentUser?.role !== 'Admin' && ((selectedCycle.status === 'closed' || currentUser?.role === 'Senior Validator') ? (
+          {/* ── Completion overview (non-Admin, or Admin on Reports tab) ── */}
+          {(currentUser?.role !== 'Admin' || adminTab === 'reports') && ((selectedCycle.status === 'closed' || currentUser?.role === 'Senior Validator' || adminTab === 'reports') ? (
             <div style={{
               background: 'var(--panel)', border: '1px solid var(--line)',
               borderRadius: 'var(--radius2)', boxShadow: 'var(--shadow)',
@@ -1382,9 +1382,9 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             )}
           </div>
 
-          {/* ── Scores by BU (non-Admin only) ── */}
-          {currentUser?.role !== 'Admin' && (() => {
-            const isClosedView = selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator';
+          {/* ── Scores by BU (non-Admin, or Admin on Reports tab) ── */}
+          {(currentUser?.role !== 'Admin' || adminTab === 'reports') && (() => {
+            const isClosedView = selectedCycle?.status === 'closed' || currentUser?.role === 'Senior Validator' || currentUser?.role === 'Admin';
             const colSpan = isClosedView ? 3 : 6;
 
             // BU 961 sub-codes are treated as one respondent entity
@@ -1785,7 +1785,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
         <div style={{ marginTop: adminTab === 'audit' ? 0 : 32 }}>
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid var(--line)' }}>
-            {(['analytics', 'audit'] as const).map(t => (
+            {(['analytics', 'reports', 'audit'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setAdminTab(t)}
@@ -1798,13 +1798,15 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}
               >
-                {t === 'analytics' ? '📊 Analytics' : '📝 Audit Log'}
+                {t === 'analytics' ? '📊 Analytics' : t === 'reports' ? '📈 Reports' : '📝 Audit Log'}
               </button>
             ))}
           </div>
 
           {/* Analytics tab */}
           {adminTab === 'analytics' && <AdminAnalytics year={selectedYear ?? ([...new Set(cycles.map(c => c.year))].sort((a, b) => b - a)[0] ?? null)} />}
+
+          {/* Reports tab — Validator charts rendered above, nothing extra needed here */}
 
           {/* Audit Log tab */}
           {adminTab === 'audit' && (

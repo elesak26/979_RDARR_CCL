@@ -204,7 +204,7 @@ export default function UserManagement() {
     const payload = {
       display_name: form.display_name.trim(),
       role: form.role,
-      secondary_role: form.role === 'Admin' ? (form.secondary_role ?? null) : null,
+      secondary_role: null as string | null,
       primary_unit_code: form.primary_unit_code.trim() || null,
       unit_codes: form.unit_codes.split(',').map(s => s.trim()).filter(Boolean),
     };
@@ -602,29 +602,13 @@ export default function UserManagement() {
                   {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
                 <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
-                  {form.role === 'Admin' && !form.secondary_role && 'Full access: manage users, cycles, reports.'}
-                  {form.role === 'Admin' && form.secondary_role === 'Validator' && 'Full admin access plus Validator capabilities (upload checklist, validate assessments).'}
+                  {form.role === 'Admin' && 'Full access: manage users, cycles, reports.'}
                   {form.role === 'Senior Validator' && 'Approve or reject validated assessments.'}
                   {form.role === 'Validator' && 'Evaluate BU self-assessments and submit for approval.'}
                   {form.role === 'Responder' && 'Submit self-assessments for assigned BU questions.'}
                   {form.role === 'Viewer' && 'Read-only access to closed cycle reports.'}
                 </div>
               </div>
-              {form.role === 'Admin' && (
-                <div className="field">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 400 }}>
-                    <input
-                      type="checkbox"
-                      checked={form.secondary_role === 'Validator'}
-                      onChange={e => setForm(f => ({ ...f, secondary_role: e.target.checked ? 'Validator' : null }))}
-                    />
-                    Also has Validator role
-                  </label>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                    Allows this Admin to also perform Validator tasks (upload checklist, score validations, submit for approval).
-                  </div>
-                </div>
-              )}
               <div className="field">
                 <label>Primary Unit Code</label>
                 <input
