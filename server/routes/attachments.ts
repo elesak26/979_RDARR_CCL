@@ -99,7 +99,32 @@ router.post(
         [responseId, decodedName, file.filename, req.user?.display_name ?? null]
       );
       const saved = result.rows[0];
-      logAudit({ action: 'attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(saved.id), details: { response_id: responseId, file_name: decodedName } });
+
+      const { cycleId } = req.params;
+      const respMeta = await query<{ bu_code: string; question_id: number; item_number: number }>(
+        `SELECT r.bu_code, r.question_id, q.item_number
+         FROM responses r JOIN questions q ON q.id = r.question_id
+         WHERE r.id = $1`,
+        [responseId]
+      );
+      const meta = respMeta.rows[0];
+
+      logAudit({
+        action: 'attachment_uploaded',
+        actor_id: req.user?.id,
+        actor_name: req.user?.display_name,
+        actor_role: req.user?.role,
+        entity_type: 'response',
+        entity_id: String(responseId),
+        cycle_id: cycleId ? parseInt(String(cycleId), 10) : null,
+        details: {
+          attachment_id: saved.id,
+          file_name: decodedName,
+          bu_code: meta?.bu_code ?? null,
+          question_id: meta?.question_id ?? null,
+          item_number: meta?.item_number ?? null,
+        },
+      });
       res.status(201).json(saved);
     } catch (err) {
       next(err);
@@ -117,18 +142,42 @@ router.delete(
     }
     try {
       const { attachId: attachmentId, id: responseId } = req.params;
-      const result = await query<{ file_path: string }>(
-        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path`,
+      const delMeta = await query<{ file_path: string; file_name: string }>(
+        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path, file_name`,
         [attachmentId]
       );
-      if (result.rows.length === 0) {
+      if (delMeta.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });
         return;
       }
       // Best-effort file removal
-      const filePath = path.join(UPLOAD_DIR, result.rows[0].file_path);
+      const filePath = path.join(UPLOAD_DIR, delMeta.rows[0].file_path);
       fs.unlink(filePath, () => {});
-      logAudit({ action: 'attachment_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(attachmentId), details: { response_id: String(responseId) } });
+
+      const { cycleId: delCycleId } = req.params;
+      const delRespMeta = await query<{ bu_code: string; question_id: number; item_number: number }>(
+        `SELECT r.bu_code, r.question_id, q.item_number
+         FROM responses r JOIN questions q ON q.id = r.question_id
+         WHERE r.id = $1`,
+        [responseId]
+      );
+      const delMeta2 = delRespMeta.rows[0];
+
+      logAudit({
+        action: 'attachment_deleted',
+        actor_id: req.user?.id,
+        actor_name: req.user?.display_name,
+        actor_role: req.user?.role,
+        entity_type: 'response',
+        entity_id: String(responseId),
+        cycle_id: delCycleId ? parseInt(String(delCycleId), 10) : null,
+        details: {
+          file_name: delMeta.rows[0].file_name,
+          bu_code: delMeta2?.bu_code ?? null,
+          question_id: delMeta2?.question_id ?? null,
+          item_number: delMeta2?.item_number ?? null,
+        },
+      });
       res.json({ ok: true });
     } catch (err) {
       next(err);

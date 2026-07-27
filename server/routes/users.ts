@@ -26,7 +26,7 @@ router.get('/api/users', async (req: Request, res: Response, next: NextFunction)
   const isAdmin = req.user?.role === 'Admin';
   try {
     const result = await query<{ unit_codes?: unknown }>(
-      `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
+      `SELECT u.id, u.display_name, u.role, u.secondary_role, u.unit_codes, u.primary_unit_code,
               u.is_active, u.created_at,
               (SELECT lh.logged_in_at FROM login_history lh
                WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC LIMIT 1) AS last_login_at
@@ -51,6 +51,13 @@ router.get('/api/users/me', (req: Request, res: Response) => {
   res.json(req.user ?? null);
 });
 
+function validateRoleCombination(role: string, secondaryRole?: string | null): string | null {
+  if (!secondaryRole) return null;
+  if (role !== 'Admin') return 'Only Admin users may have a secondary role';
+  if (secondaryRole !== 'Validator') return 'The only allowed secondary role is Validator';
+  return null;
+}
+
 // POST /api/users — create user (Admin only)
 router.post('/api/users', async (req: Request, res: Response, next: NextFunction) => {
   if (req.user?.role !== 'Admin') {
@@ -58,10 +65,11 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
     return;
   }
   try {
-    const { id, display_name, role, unit_codes = [], primary_unit_code = null } = req.body as {
+    const { id, display_name, role, secondary_role = null, unit_codes = [], primary_unit_code = null } = req.body as {
       id: string;
       display_name: string;
       role: string;
+      secondary_role?: string | null;
       unit_codes?: string[];
       primary_unit_code?: string | null;
     };
@@ -71,12 +79,19 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
       return;
     }
 
+    const roleErr = validateRoleCombination(role, secondary_role);
+    if (roleErr) {
+      res.status(400).json({ error: roleErr });
+      return;
+    }
+
     const result = await query(
-      `INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code)
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atVALUES ($1, $2, $3, $4, $5)`,
-      [id, display_name, role, unit_codes, primary_unit_code]
+      `INSERT INTO users (id, display_name, role, secondary_role, unit_codes, primary_unit_code)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active, created_at`,
+      [id, display_name, role, secondary_role ?? null, unit_codes, primary_unit_code]
     );
-    logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role } });
+    logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role, secondary_role: result.rows[0].secondary_role } });
     res.status(201).json(parseUnitCodes(result.rows[0]));
   } catch (err) {
     next(err);
@@ -91,29 +106,53 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
   }
   try {
     const { id } = req.params;
-    const { display_name, role, unit_codes, primary_unit_code } = req.body as {
+    const { display_name, role, secondary_role, unit_codes, primary_unit_code } = req.body as {
       display_name?: string;
       role?: string;
+      secondary_role?: string | null;
       unit_codes?: string[];
       primary_unit_code?: string | null;
     };
 
+    // If role or secondary_role is being updated, validate the combination against current values
+    if (role !== undefined || secondary_role !== undefined) {
+      // Fetch current values to fill in any unspecified field
+      const current = await query<{ role: string; secondary_role: string | null }>(
+        `SELECT role, secondary_role FROM users WHERE id = $1`,
+        [id]
+      );
+      if (current.rows.length === 0) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      const effectiveRole = role ?? current.rows[0].role;
+      const effectiveSecondary = secondary_role !== undefined ? secondary_role : current.rows[0].secondary_role;
+      const roleErr = validateRoleCombination(effectiveRole, effectiveSecondary);
+      if (roleErr) {
+        res.status(400).json({ error: roleErr });
+        return;
+      }
+    }
+
+    const updateSecondary = 'secondary_role' in req.body;
     const result = await query(
       `UPDATE users
        SET
-         display_name     = COALESCE($2, display_name),
-         role             = COALESCE($3, role),
-         unit_codes       = COALESCE($4, unit_codes),
-         primary_unit_code = COALESCE($5, primary_unit_code)
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atWHERE id = $1`,
-      [id, display_name ?? null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
+         display_name      = COALESCE($2, display_name),
+         role              = COALESCE($3, role),
+         secondary_role    = CASE WHEN $4 THEN $5::text ELSE secondary_role END,
+         unit_codes        = COALESCE($6, unit_codes),
+         primary_unit_code = COALESCE($7, primary_unit_code)
+       WHERE id = $1
+       RETURNING id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active, created_at`,
+      [id, display_name ?? null, role ?? null, updateSecondary, secondary_role ?? null, unit_codes ?? null, primary_unit_code ?? null]
     );
 
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    logAudit({ action: 'user_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(id), details: { display_name, role } });
+    logAudit({ action: 'user_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(id), details: { display_name, role, secondary_role } });
     res.json(parseUnitCodes(result.rows[0]));
   } catch (err) {
     next(err);

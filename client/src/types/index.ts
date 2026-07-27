@@ -7,6 +7,7 @@ export interface User {
   id: string;
   display_name: string;
   role: UserRole;
+  secondary_role?: UserRole | null;
   unit_codes: string[];
   primary_unit_code: string | null;
   is_active: boolean;

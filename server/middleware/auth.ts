@@ -10,6 +10,7 @@ export interface AuthUser {
   id: string;
   display_name: string;
   role: string;
+  secondary_role?: string | null;
   unit_codes: string[];
   primary_unit_code: string | null;
   is_active: boolean;
@@ -42,7 +43,7 @@ function normalizeUser(row: UserRow | undefined): AuthUser | null {
 
 async function resolveUser(id: string): Promise<AuthUser | null> {
   const result = await query<UserRow>(
-    'SELECT id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE id = $1',
+    'SELECT id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE id = $1',
     [id]
   );
   return normalizeUser(result.rows[0]);
@@ -50,7 +51,7 @@ async function resolveUser(id: string): Promise<AuthUser | null> {
 
 async function firstAdmin(): Promise<AuthUser | null> {
   const result = await query<UserRow>(
-    "SELECT id, display_name, role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
+    "SELECT id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
   );
   return normalizeUser(result.rows[0]);
 }

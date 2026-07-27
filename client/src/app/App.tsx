@@ -169,7 +169,7 @@ const ValidationOverviewDetail = lazy(() => import('../views/ValidationOverviewD
 
 function hasRole(user: User | null, ...roles: UserRole[]): boolean {
   if (!user) return false;
-  return roles.includes(user.role);
+  return roles.includes(user.role) || (user.secondary_role != null && roles.includes(user.secondary_role));
 }
 
 const ROLE_ORDER: UserRole[] = ['Admin', 'Validator', 'Senior Validator', 'Responder', 'Viewer'];
@@ -299,6 +299,9 @@ export default function App() {
         {currentUser && (
           <div className="toolbar__user">
             <span className="toolbar__role">{currentUser.role}</span>
+            {currentUser.secondary_role && (
+              <span className="toolbar__role" style={{ opacity: 0.8 }}>{currentUser.secondary_role}</span>
+            )}
             <span>{currentUser.display_name}</span>
             {currentUser.primary_unit_code && (
               <span className="toolbar__unit">{currentUser.primary_unit_code}</span>

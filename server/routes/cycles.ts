@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
+import { userHasRole } from '../middleware/authorization';
 
 interface ChecklistEntry {
   buCode: string;
@@ -289,7 +290,7 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
 
 // PUT /api/cycles/:id/submit — draft → pending_approval (Validator)
 router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Validator') {
+  if (!userHasRole(req.user, 'Validator')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -391,7 +392,7 @@ router.put('/api/cycles/:id/reject', async (req: Request, res: Response, next: N
 
 // PUT /api/cycles/:id/distribute — published → distributed (Validator)
 router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Validator') {
+  if (!userHasRole(req.user, 'Validator')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -540,7 +541,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
 // PUT /api/cycles/:id/close — distributed → closed (Validator)
 // Force-closes the cycle: any in-flight responses or validations are cancelled.
 router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Validator') {
+  if (!userHasRole(req.user, 'Validator')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -650,8 +651,7 @@ router.post(
   '/api/cycles/:id/checklist',
   checklistUpload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
-    const role = req.user?.role;
-    if (role !== 'Validator') {
+    if (!userHasRole(req.user, 'Validator')) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -750,8 +750,7 @@ router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next
 
 // GET /api/cycles/:id/comments — list comments (Validator, Senior Validator, Admin)
 router.get('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
-  const role = req.user?.role;
-  if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+  if (!userHasRole(req.user, 'Validator') && !userHasRole(req.user, 'Senior Validator') && !userHasRole(req.user, 'Admin')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -772,8 +771,7 @@ router.get('/api/cycles/:id/comments', async (req: Request, res: Response, next:
 
 // POST /api/cycles/:id/comments — post a comment (Validator or Senior Validator, pending_approval only)
 router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
-  const role = req.user?.role;
-  if (role !== 'Validator' && role !== 'Senior Validator') {
+  if (!userHasRole(req.user, 'Validator') && !userHasRole(req.user, 'Senior Validator')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -802,7 +800,7 @@ router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next
       `INSERT INTO cycle_comments (cycle_id, user_id, user_name, user_role, body)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, user_id, user_name, user_role, body, created_at`,
-      [id, req.user?.id, req.user?.display_name, role, body.trim()]
+      [id, req.user?.id, req.user?.display_name, req.user?.role, body.trim()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {

@@ -711,7 +711,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
   return (
     <div ref={reportRef}>
       {/* ── Header ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
+      {!(currentUser?.role === 'Admin' && adminTab === 'audit') && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <div>
           {!embedded && <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Reports</div>}
           {selectedCycle && (
@@ -837,7 +837,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             </button>
           )}
         </div>
-      </div>
+      </div>}
 
       {downloadError && (
         <div style={{ margin: '8px 0', padding: '8px 12px', borderRadius: 6, background: 'var(--danger-bg, #fdecec)', color: 'var(--danger)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -862,7 +862,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
         </div>
       )}
 
-      {summary && selectedCycle && (
+      {summary && selectedCycle && !(currentUser?.role === 'Admin' && adminTab === 'audit') && (
         <>
           {/* ── Completion overview (non-Admin only) ── */}
           {currentUser?.role !== 'Admin' && ((selectedCycle.status === 'closed' || currentUser?.role === 'Senior Validator') ? (
@@ -1782,7 +1782,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
       {/* ── Admin Analytics + Audit Log ── */}
       {currentUser?.role === 'Admin' && (
-        <div style={{ marginTop: 32 }}>
+        <div style={{ marginTop: adminTab === 'audit' ? 0 : 32 }}>
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid var(--line)' }}>
             {(['analytics', 'audit'] as const).map(t => (
@@ -1838,7 +1838,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span className="small" style={{ color: 'var(--muted)' }}>Role</span>
               <select value={auditActorRole} onChange={e => { setAuditActorRole(e.target.value); setAuditActorId('All'); }} style={{ minWidth: 150 }}>
-                {ACTOR_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                {ACTOR_ROLES.map(r => <option key={r} value={r}>{r === 'Responder' ? 'Respondent' : r}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -1847,11 +1847,14 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 <option value="All">All actors</option>
                 {auditUsers
                   .filter(u => auditActorRole === 'All' || u.role === auditActorRole)
-                  .map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.display_name}{u.is_active === false ? ' (inactive)' : ''}
-                    </option>
-                  ))}
+                  .map(u => {
+                    const bu = u.primary_unit_code ?? u.unit_codes?.[0] ?? null;
+                    return (
+                      <option key={u.id} value={u.id}>
+                        {u.display_name}{bu ? ` · BU ${bu}` : ''}{u.is_active === false ? ' (inactive)' : ''}
+                      </option>
+                    );
+                  })}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -1914,11 +1917,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                 {auditLoading && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>}
                 {!auditLoading && auditEntries.length === 0 && <tr><td colSpan={10} className="small" style={{ textAlign: 'center', padding: 24 }}>No audit entries found.</td></tr>}
                 {!auditLoading && auditEntries.length > 0 && (() => {
-                  // actor_id is a server-side filter now, so these rows are already
-                  // the final set — no second pass in the browser.
-                  return auditEntries.map(entry => {
-                  const d = entry.details ?? {};
-
                   const ACTION_LABELS: Record<string, string> = {
                     response_saved:                    'Score saved',
                     response_submitted:                'Assessment submitted',
@@ -1950,25 +1948,6 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                   const SCORE_LABELS_AUDIT: Record<number, string> = { 1: '1 – Non-compliant', 2: '2 – Partially compliant', 3: '3 – Largely compliant', 4: '4 – Compliant' };
                   const scoreLabel = (v: unknown) => v != null ? (SCORE_LABELS_AUDIT[Number(v)] ?? String(v)) : null;
 
-                  const questionLabel = d.item_number != null ? `Item ${d.item_number}` : d.question_id ? `Q${d.question_id}` : null;
-                  const subject = [
-                    d.bu_code   ? `BU ${d.bu_code}`              : null,
-                    questionLabel,
-                    d.bu_name   ? `(${d.bu_name})`               : null,
-                    d.display_name ? d.display_name as string     : null,
-                  ].filter(Boolean).join(' ') || '—';
-
-                  const comment = (d.comments as string | null) ?? (d.return_comment as string | null) ?? (d.rejection_comment as string | null) ?? (d.justification as string | null) ?? null;
-                  const additionalControls = (d.additional_controls as string | null) ?? null;
-                  const file    = (d.file_name as string | null) ?? null;
-
-                  // Show the score the user entered: prefer new_score, fall back to old_score
-                  const scoreVal = d.new_score != null ? d.new_score : (d.old_score != null ? d.old_score : null);
-                  const scoreStr = scoreLabel(scoreVal);
-                  const scoreNum = scoreVal != null ? Number(scoreVal) : null;
-
-                  const eventLabel = ACTION_LABELS[entry.action] ?? entry.action;
-
                   const EVENT_COLOR: Record<string, string> = {
                     response_submitted:                'var(--accent)',
                     validation_approved:               'var(--ok)',
@@ -1977,41 +1956,159 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
                     cycle_distributed:                 'var(--accent)',
                     response_returned:                 'var(--warn)',
                   };
-                  const eventColor = EVENT_COLOR[entry.action] ?? 'var(--text)';
 
-                  const scoreColor2 = scoreNum != null
-                    ? scoreNum <= 1.5 ? 'var(--danger)' : scoreNum <= 2.5 ? '#ffc000' : scoreNum <= 3.5 ? '#81b848' : 'var(--ok)'
-                    : 'var(--muted)';
+                  // Merge Responder / Validator / Senior Validator entries for the same item
+                  // into one row per actor×item. Server returns entries newest-first.
+                  const RESPONDER_MERGE_ACTIONS = new Set(['response_submitted', 'response_saved', 'attachment_uploaded']);
+                  const VALIDATOR_MERGE_ACTIONS = new Set([
+                    'validation_updated', 'validation_submitted_for_approval',
+                    'validation_attachment_uploaded',
+                  ]);
+                  const SV_MERGE_ACTIONS = new Set(['validation_approved', 'validation_rejected']);
 
-                  return (
-                    <tr key={entry.id}>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 11 }}>
-                        {entry.created_at ? new Date(entry.created_at).toLocaleString() : '—'}
-                      </td>
-                      <td>
-                        <span style={{ fontWeight: 600, color: eventColor }}>{eventLabel}</span>
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{entry.actor_name ?? entry.actor_id ?? '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)' }}>{entry.actor_role ?? '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{entry.cycle_name ?? (entry.cycle_id ? String(entry.cycle_id) : '—')}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{subject}</td>
-                      <td style={{ color: scoreColor2, fontWeight: scoreStr ? 600 : undefined }}>
-                        {scoreStr ?? <span style={{ color: 'var(--muted)' }}>—</span>}
-                      </td>
-                      <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={comment ?? ''}>
-                        {comment ?? <span style={{ color: 'var(--muted)' }}>—</span>}
-                      </td>
-                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={additionalControls ?? ''}>
-                        {additionalControls ?? <span style={{ color: 'var(--muted)' }}>—</span>}
-                      </td>
-                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={displayFileName(file)}>
-                        {file
-                          ? <a {...downloadLinkProps(`/audit-log/${entry.id}/file`, file, setAuditError)} style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}>{displayFileName(file)}</a>
-                          : <span style={{ color: 'var(--muted)' }}>—</span>
-                        }
-                      </td>
-                    </tr>
-                  );
+                  type FileRef = { entryId: number; fileName: string };
+                  type MergedGroup = {
+                    primary: typeof auditEntries[0];
+                    score: unknown;
+                    comment: string | null;
+                    additionalControlsMerged: string | null;
+                    files: FileRef[];
+                  };
+                  const mergedGroups = new Map<string, MergedGroup>();
+                  const absorbedIds = new Set<number>();
+
+                  const mergeEntry = (entry: typeof auditEntries[0], isAttachment: boolean, attachmentAction: string) => {
+                    const d = entry.details ?? {};
+                    const key = [
+                      entry.actor_role ?? '',
+                      entry.actor_id ?? '',
+                      (d.bu_code as string) ?? '',
+                      String(d.item_number ?? d.question_id ?? ''),
+                      String(entry.cycle_id ?? ''),
+                    ].join('|');
+
+                    if (!mergedGroups.has(key)) {
+                      mergedGroups.set(key, { primary: entry, score: null, comment: null, additionalControlsMerged: null, files: [] });
+                    }
+                    const group = mergedGroups.get(key)!;
+
+                    if (isAttachment) {
+                      const fn = d.file_name as string | null;
+                      if (fn) group.files.push({ entryId: entry.id, fileName: fn });
+                    } else {
+                      if (group.score == null) group.score = (d.new_score ?? null);
+                      if (group.comment == null) {
+                        const c = (d.justification ?? d.comments ?? d.return_comment ?? d.rejection_comment) as string | null | undefined;
+                        if (c != null) group.comment = c;
+                      }
+                      if (group.additionalControlsMerged == null && d.additional_controls != null)
+                        group.additionalControlsMerged = d.additional_controls as string;
+                      if (group.primary.action === attachmentAction) group.primary = entry;
+                    }
+                    if (entry !== group.primary) absorbedIds.add(entry.id);
+                  };
+
+                  for (const entry of auditEntries) {
+                    if (entry.actor_role === 'Responder' && RESPONDER_MERGE_ACTIONS.has(entry.action))
+                      mergeEntry(entry, entry.action === 'attachment_uploaded', 'attachment_uploaded');
+                    else if (entry.actor_role === 'Validator' && VALIDATOR_MERGE_ACTIONS.has(entry.action))
+                      mergeEntry(entry, entry.action === 'validation_attachment_uploaded', 'validation_attachment_uploaded');
+                    else if (entry.actor_role === 'Senior Validator' && SV_MERGE_ACTIONS.has(entry.action))
+                      mergeEntry(entry, false, '');
+                  }
+
+                  const groupKey = (entry: typeof auditEntries[0]) => {
+                    const d = entry.details ?? {};
+                    return [
+                      entry.actor_role ?? '',
+                      entry.actor_id ?? '',
+                      (d.bu_code as string) ?? '',
+                      String(d.item_number ?? d.question_id ?? ''),
+                      String(entry.cycle_id ?? ''),
+                    ].join('|');
+                  };
+
+                  const isMergedPrimary = (entry: typeof auditEntries[0]) => {
+                    if (entry.actor_role === 'Responder') return RESPONDER_MERGE_ACTIONS.has(entry.action);
+                    if (entry.actor_role === 'Validator') return VALIDATOR_MERGE_ACTIONS.has(entry.action);
+                    if (entry.actor_role === 'Senior Validator') return SV_MERGE_ACTIONS.has(entry.action);
+                    return false;
+                  };
+
+                  return auditEntries
+                    .filter(entry => !absorbedIds.has(entry.id))
+                    .map(entry => {
+                    const d = entry.details ?? {};
+                    const merged = isMergedPrimary(entry);
+                    const group = merged ? (mergedGroups.get(groupKey(entry)) ?? null) : null;
+
+                    const scoreVal = group
+                      ? group.score
+                      : (d.new_score != null ? d.new_score : d.old_score != null ? d.old_score : null);
+                    const comment = group
+                      ? group.comment
+                      : ((d.justification as string | null) ?? (d.comments as string | null) ?? (d.return_comment as string | null) ?? (d.rejection_comment as string | null) ?? null);
+                    const additionalControls = group
+                      ? (group.additionalControlsMerged ?? null)
+                      : ((d.additional_controls as string | null) ?? null);
+                    const files: FileRef[] = group
+                      ? group.files
+                      : (d.file_name ? [{ entryId: entry.id, fileName: d.file_name as string }] : []);
+
+                    const scoreStr = scoreLabel(scoreVal);
+                    const scoreNum = scoreVal != null ? Number(scoreVal) : null;
+                    const eventLabel = ACTION_LABELS[entry.action] ?? entry.action;
+                    const eventColor = EVENT_COLOR[entry.action] ?? 'var(--text)';
+                    const scoreColor2 = scoreNum != null
+                      ? scoreNum <= 1.5 ? 'var(--danger)' : scoreNum <= 2.5 ? '#ffc000' : scoreNum <= 3.5 ? '#81b848' : 'var(--ok)'
+                      : 'var(--muted)';
+
+                    const actorUser = auditUsers.find(u => u.id === entry.actor_id);
+                    const actorBu = actorUser
+                      ? (actorUser.primary_unit_code ?? actorUser.unit_codes?.[0] ?? null)
+                      : (d.bu_code as string | null | undefined) ?? null;
+                    const actorLabel = entry.actor_name ?? entry.actor_id ?? '—';
+                    const roleLabel = entry.actor_role === 'Responder' ? 'Respondent' : (entry.actor_role ?? '—');
+
+                    const subject = d.item_number != null ? `Item ${d.item_number}` : d.question_id ? `Q${d.question_id}` : '—';
+
+                    return (
+                      <tr key={entry.id}>
+                        <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 11 }}>
+                          {entry.created_at ? new Date(entry.created_at).toLocaleString() : '—'}
+                        </td>
+                        <td>
+                          <span style={{ fontWeight: 600, color: eventColor }}>{eventLabel}</span>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {actorLabel}
+                          {actorBu && <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· BU {actorBu}</span>}
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap', color: 'var(--muted)' }}>{roleLabel}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{entry.cycle_name ?? (entry.cycle_id ? String(entry.cycle_id) : '—')}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{subject}</td>
+                        <td style={{ color: scoreColor2, fontWeight: scoreStr ? 600 : undefined }}>
+                          {scoreStr ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                        </td>
+                        <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={comment ?? ''}>
+                          {comment ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                        </td>
+                        <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }} title={additionalControls ?? ''}>
+                          {additionalControls ?? <span style={{ color: 'var(--muted)' }}>—</span>}
+                        </td>
+                        <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {files.length > 0
+                            ? files.map((f, fi) => (
+                                <span key={f.entryId} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={displayFileName(f.fileName)}>
+                                  {fi > 0 && <span style={{ color: 'var(--muted)', marginRight: 2 }}>·</span>}
+                                  <a {...downloadLinkProps(`/audit-log/${f.entryId}/file`, f.fileName, setAuditError)} style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}>{displayFileName(f.fileName)}</a>
+                                </span>
+                              ))
+                            : <span style={{ color: 'var(--muted)' }}>—</span>
+                          }
+                        </td>
+                      </tr>
+                    );
                   });
                 })()}
               </tbody>

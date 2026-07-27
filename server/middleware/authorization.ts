@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import type { AuthUser } from './auth';
 
 const ROLE_RANK: Record<string, number> = {
   Responder: 0,
@@ -18,4 +19,10 @@ export function requireRole(minRole: string) {
     }
     next();
   };
+}
+
+/** Check if a user has a given role, considering both primary and secondary_role. */
+export function userHasRole(user: AuthUser | undefined, role: string): boolean {
+  if (!user) return false;
+  return user.role === role || user.secondary_role === role;
 }

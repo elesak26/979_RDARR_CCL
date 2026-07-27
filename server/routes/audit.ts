@@ -3,6 +3,7 @@ import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import { query } from '../db';
 import * as XLSX from 'xlsx';
+import { userHasRole } from '../middleware/authorization';
 
 const router = Router();
 
@@ -10,7 +11,7 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'upload
 
 // GET /api/audit-log — Admin only, supports ?cycle_id, ?entity_type, ?actor_id, ?from_date, ?to_date, ?limit, ?format=csv
 router.get('/api/audit-log', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Admin') {
+  if (!userHasRole(req.user, 'Admin')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -80,7 +81,7 @@ router.get('/api/audit-log', async (req: Request, res: Response, next: NextFunct
 
 // GET /api/audit-log/export/excel — Admin only, same filters as JSON endpoint, returns .xlsx
 router.get('/api/audit-log/export/excel', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Admin') {
+  if (!userHasRole(req.user, 'Admin')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -307,7 +308,7 @@ router.get('/api/audit-log/export/excel', async (req: Request, res: Response, ne
 
 // GET /api/audit-log/:entryId/file — Admin only, download the file attached to an audit entry
 router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, next: NextFunction) => {
-  if (req.user?.role !== 'Admin') {
+  if (!userHasRole(req.user, 'Admin')) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -342,12 +343,16 @@ router.get('/api/audit-log/:entryId/file', async (req: Request, res: Response, n
       );
       fileRow = r.rows[0];
     } else {
-      // response attachment or other — entity_id is the response_id
+      // response attachment — entity_id is the response_id (new format) or
+      // details.response_id is present (old format where entity_id was the attachment row id).
+      const responseId = (details.response_id != null)
+        ? parseInt(String(details.response_id), 10)
+        : parseInt(row.entity_id, 10);
       const r = await query<{ file_name: string; file_path: string }>(
         `SELECT file_name, file_path FROM response_attachments
          WHERE response_id = $1 AND file_name = $2
          ORDER BY uploaded_at DESC`,
-        [parseInt(row.entity_id, 10), fileName]
+        [responseId, fileName]
       );
       fileRow = r.rows[0];
     }

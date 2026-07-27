@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { getAuthConfig, getAccessToken, beginLogin, completeLoginIfCallback } from './oidc';
+import { getAuthConfig, fetchSession, beginLogin, completeLoginIfCallback } from './oidc';
 
 /**
  * Wraps the app. Before rendering, ensures the user is authenticated via NBG
@@ -24,7 +24,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
         // Returning from NBG Identity with ?code= ?
         const handled = await completeLoginIfCallback();
         if (cancelled) return;
-        if (handled || getAccessToken()) {
+        const session = await fetchSession();
+        if (handled || session.authenticated) {
           setStatus('authed');
           return;
         }
