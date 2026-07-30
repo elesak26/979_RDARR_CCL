@@ -1,5 +1,5 @@
 /**
- * mailer — SMTP email sending for RVMT.
+ * mailer — SMTP email sending for COMPASS.
  *
  * Mirrors the NBG pattern from the reference app (Nbg.AspNetCore.PMSAssistantUI:
  * SmtpClientWrapper + EmailService). Per-environment SMTP config comes from env
@@ -28,7 +28,7 @@ const SECURE = (process.env.SMTP_SECURE || 'false').trim().toLowerCase() === 'tr
 const USER = (process.env.SMTP_USER || '').trim();
 const PASS = process.env.SMTP_PASS || '';
 const FROM_ADDR = (process.env.SMTP_FROM || 'RDARRVU@nbg.gr').trim();
-const FROM_NAME = (process.env.SMTP_FROM_NAME || 'RVMT — RDARR').trim();
+const FROM_NAME = (process.env.SMTP_FROM_NAME || 'COMPASS — RDARR').trim();
 
 /** True when an SMTP host is configured. When false, sendMail is a logged no-op
  *  so environments without email (local, unconfigured) keep working. */
@@ -36,7 +36,7 @@ export function mailerEnabled(): boolean {
   return HOST.length > 0;
 }
 
-/** The "From" header, e.g. `RVMT — RDARR <RDARRVU@nbg.gr>`. */
+/** The "From" header, e.g. `COMPASS — RDARR <RDARRVU@nbg.gr>`. */
 function fromHeader(): string {
   return FROM_NAME ? `${FROM_NAME} <${FROM_ADDR}>` : FROM_ADDR;
 }

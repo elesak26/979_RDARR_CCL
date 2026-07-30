@@ -353,7 +353,7 @@ router.get('/api/audit-log/export/excel', async (req: Request, res: Response, ne
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     const cyclePart = cycle_id ? `_cycle${cycle_id}` : '';
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="RVMT_Audit_Log${cyclePart}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="COMPASS_Audit_Log${cyclePart}.xlsx"`);
     res.send(buf);
   } catch (err) {
     next(err);

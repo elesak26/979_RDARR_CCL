@@ -557,7 +557,7 @@ export default function Reports({ currentUser, embedded, viewerMode, activeCycle
 
   const handleAuditExportExcel = () => {
     const params = buildAuditParams();
-    api.download(`/audit-log/export/excel?${params.toString()}`, 'RVMT_Audit_Log.xlsx')
+    api.download(`/audit-log/export/excel?${params.toString()}`, 'COMPASS_Audit_Log.xlsx')
       .catch(e => setAuditError(e instanceof Error ? e.message : 'Export failed'));
   };
 
