@@ -67,7 +67,7 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
       `INSERT INTO users (id, display_name, email, role, unit_codes, primary_unit_code)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, display_name, email, role, unit_codes, primary_unit_code, is_active, created_at`,
-      [id, display_name, email || null, role, unit_codes, primary_unit_code]
+      [id, display_name, email || null, role, JSON.stringify(unit_codes), primary_unit_code]
     );
     logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role } });
     res.status(201).json(parseUnitCodes(result.rows[0]));
@@ -102,7 +102,7 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
          primary_unit_code = COALESCE($6, primary_unit_code)
        WHERE id = $1
        RETURNING id, display_name, email, role, unit_codes, primary_unit_code, is_active, created_at`,
-      [id, display_name ?? null, email !== undefined ? (email || null) : null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
+      [id, display_name ?? null, email !== undefined ? (email || null) : null, role ?? null, unit_codes !== undefined ? JSON.stringify(unit_codes) : null, primary_unit_code ?? null]
     );
 
     if (result.rows.length === 0) {
