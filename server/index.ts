@@ -174,7 +174,7 @@ app.listen(PORT, () => {
 
   logger.info(
     { port: PORT, database },
-    'COMPASS — RDARR Validation Management Tool server started'
+    'COMPASS - Compliance Control Oversight Management, Process Assessment & Scoring System server started'
   );
 });
 

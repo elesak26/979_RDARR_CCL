@@ -30,37 +30,45 @@ function isInCIDR(ip: string, cidr: string): boolean {
   return false;
 }
 
-// ── Parse ALLOWED_IPS at startup ─────────────────────────────────────────────
+// ── Lazy init ─────────────────────────────────────────────────────────────────
+// ALLOWED_IPS is read on the first request (not at module load) so that
+// dotenv.config() in index.ts has already populated process.env before we check.
 
 const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
-const rawAllowed = (process.env.ALLOWED_IPS ?? '').trim();
+let initialized = false;
+let checkEnabled = false;
+let allowedCIDRs: string[] = [];
 
-/** Parsed list of CIDR blocks. Empty means the check is disabled (non-prod only). */
-const allowedCIDRs: string[] = rawAllowed
-  ? rawAllowed.split(',').map(s => s.trim()).filter(Boolean)
-  : [];
+function init(): void {
+  if (initialized) return;
+  initialized = true;
 
-const checkEnabled = allowedCIDRs.length > 0;
+  const rawAllowed = (process.env.ALLOWED_IPS ?? '').trim();
+  allowedCIDRs = rawAllowed
+    ? rawAllowed.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  checkEnabled = allowedCIDRs.length > 0;
 
-if (!checkEnabled) {
-  if (IS_NON_PROD) {
-    logger.warn(
-      'ALLOWED_IPS is not set — IP whitelist check is DISABLED (non-production environment)',
-    );
-  } else {
-    // Production with no whitelist configured: refuse to start.
-    throw new Error(
-      'ALLOWED_IPS must be set in production. ' +
-      'Set it to a comma-separated list of CIDR blocks for the NBG intranet ' +
-      '(e.g. ALLOWED_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16).',
-    );
+  if (!checkEnabled) {
+    if (IS_NON_PROD) {
+      logger.warn('ALLOWED_IPS is not set — IP whitelist check is DISABLED (non-production environment)');
+    } else {
+      // Production with no whitelist configured: refuse to serve any request.
+      throw new Error(
+        'ALLOWED_IPS must be set in production. ' +
+        'Set it to a comma-separated list of CIDR blocks for the NBG intranet ' +
+        '(e.g. ALLOWED_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16).',
+      );
+    }
   }
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 export function ipWhitelistMiddleware(req: Request, res: Response, next: NextFunction): void {
+  init();
+
   if (!checkEnabled) {
     return next();
   }
