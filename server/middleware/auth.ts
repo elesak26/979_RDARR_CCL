@@ -3,8 +3,53 @@ import { createRemoteJWKSet, jwtVerify, decodeProtectedHeader, importJWK, type J
 import { query } from '../db';
 import { logger } from '../logger';
 import { decryptTokens, getSessionChunks, clearSessionCookies } from '../lib/tokenEncryption';
-import { DISABLE_LOGIN, UAT_PERSONA_MODE, PERSONA_HEADER_ALLOWED } from '../lib/appEnv';
+import { DISABLE_LOGIN, UAT_PERSONA_MODE, PERSONA_HEADER_ALLOWED, IS_NON_PROD } from '../lib/appEnv';
 import { resolveGroupRole, buildAdUser, isGlobalAdmin, type ResolvedRole } from '../lib/groupRoles';
+
+// ── MFA enforcement ───────────────────────────────────────────────────────────
+// REQUIRE_MFA=true (default in production) enforces that the verified id_token's
+// `amr` claim includes at least one MFA method. The NBG Identity / Entra tokens
+// signal MFA via amr values: 'mfa', 'hwk', 'swk', 'otp', 'face', 'fpt', 'kba'.
+// When unset the behaviour mirrors the environment: non-prod = warn-only,
+// production = enforce. Set REQUIRE_MFA=false explicitly to disable (non-prod only).
+const MFA_AMR_INDICATORS = new Set(['mfa', 'hwk', 'swk', 'otp', 'face', 'fpt', 'kba', 'pop', 'pin', 'sms', 'tel', 'push', 'rsa', 'u2f', 'wia']);
+
+function mfaRequired(): boolean {
+  const v = (process.env.REQUIRE_MFA ?? '').trim().toLowerCase();
+  if (v === 'false') {
+    if (!IS_NON_PROD) {
+      // Silently ignore the override in production — never disable MFA in prod.
+      logger.warn('REQUIRE_MFA=false is ignored in production; MFA is always enforced');
+      return true;
+    }
+    return false;
+  }
+  // Default: enforce in production, warn-only in non-prod.
+  return true;
+}
+
+/** Returns true when the verified claims include a recognised MFA amr entry. */
+function hasMfa(claims: JWTPayload): boolean {
+  const amr = (claims as Record<string, unknown>)['amr'];
+  const methods: string[] = Array.isArray(amr) ? amr.map(String) : typeof amr === 'string' ? [amr] : [];
+  return methods.some(m => MFA_AMR_INDICATORS.has(m.toLowerCase()));
+}
+
+/**
+ * Enforce MFA after token verification. Returns true when the request should be
+ * rejected (caller must not call next()). Logs a warning and returns false in
+ * non-prod when REQUIRE_MFA is not explicitly true, so QA can test without MFA.
+ */
+function rejectIfNoMfa(claims: JWTPayload, res: Response): boolean {
+  if (hasMfa(claims)) return false;
+  if (!mfaRequired() && IS_NON_PROD) {
+    logger.warn({ sub: claims.sub }, 'authMiddleware: MFA not present in token (non-prod — warn only)');
+    return false;
+  }
+  logger.warn({ sub: claims.sub }, 'authMiddleware: MFA not present in token — rejecting');
+  res.status(401).json({ error: 'Multi-factor authentication is required to access this application.' });
+  return true;
+}
 
 export interface AuthUser {
   id: string;
@@ -202,6 +247,9 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
+
+  // Enforce MFA immediately after signature verification, before user resolution.
+  if (rejectIfNoMfa(claims, res)) return;
 
   // X-User-Id is the persona dropdown's transport, so it is honoured only while a
   // persona mode is on. With both flags off — the production posture — the acting

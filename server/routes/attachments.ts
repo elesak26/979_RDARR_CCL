@@ -3,6 +3,8 @@ import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { uploadFileFilter } from '../lib/uploadFilter';
+import { encryptFile, decryptFileTo, fileEncryptionAvailable } from '../lib/fileEncryption';
+import { scanFile } from '../lib/clamScan';
 import { query } from '../db';
 import { logAudit } from '../audit';
 
@@ -92,6 +94,25 @@ router.post(
         return;
       }
 
+      // Malware scan — runs on the plaintext file before DB insert or encryption.
+      // Infected files are deleted immediately; the request is rejected with 422.
+      const scan = await scanFile(file.path);
+      if (!scan.clean && !scan.unavailable) {
+        fs.unlink(file.path, () => {});
+        logAudit({
+          action: 'attachment_blocked_malware',
+          actor_id: req.user?.id,
+          actor_name: req.user?.display_name,
+          actor_role: req.user?.role,
+          entity_type: 'response',
+          entity_id: String(responseId),
+          cycle_id: req.params.cycleId ? parseInt(String(req.params.cycleId), 10) : null,
+          details: { file_name: decodedName, threat: scan.threat },
+        });
+        res.status(422).json({ error: `File rejected: malware detected (${scan.threat})` });
+        return;
+      }
+
       const result = await query(
         `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
          VALUES ($1, $2, $3, $4)
@@ -108,6 +129,19 @@ router.post(
         [responseId]
       );
       const meta = respMeta.rows[0];
+
+      // Encrypt the file in-place after it has been persisted to the DB so a
+      // failed encryption leaves the DB record intact and the error surfaces
+      // cleanly; the file is removed on encrypt failure to avoid leaving a
+      // plaintext copy on disk.
+      if (fileEncryptionAvailable()) {
+        try {
+          await encryptFile(file.path, file.path);
+        } catch (encErr) {
+          fs.unlink(file.path, () => {});
+          throw encErr;
+        }
+      }
 
       logAudit({
         action: 'attachment_uploaded',
@@ -201,7 +235,10 @@ router.get(
       }
       const { file_name, file_path } = result.rows[0];
       const full = path.join(UPLOAD_DIR, file_path);
-      res.download(full, file_name);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file_name)}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      await decryptFileTo(full, res);
+      res.end();
     } catch (err) {
       next(err);
     }

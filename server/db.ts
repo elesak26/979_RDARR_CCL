@@ -13,8 +13,8 @@ function buildPoolConfig() {
   // DB_SSL=disable  → no TLS (local dev only)
   const sslMode = process.env.DB_SSL ?? (process.env.NODE_ENV === 'production' ? 'require' : 'disable');
   const ssl = sslMode === 'disable' ? false
-    : sslMode === 'allow'   ? { rejectUnauthorized: false }
-    : { rejectUnauthorized: true }; // 'require'
+    : sslMode === 'allow'   ? { rejectUnauthorized: false, minVersion: 'TLSv1.2' as const }
+    : { rejectUnauthorized: true,  minVersion: 'TLSv1.2' as const }; // 'require'
 
   if (cs) return { connectionString: cs, ssl: ssl || undefined };
   return {

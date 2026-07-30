@@ -8,7 +8,7 @@ BACKEND_URL="${BACKEND_URL:-http://server:3001}"
 API_UPSTREAM="${API_UPSTREAM:-$BACKEND_URL}"
 export BACKEND_URL API_UPSTREAM
 
-envsubst '${BACKEND_URL} ${API_UPSTREAM}' < /etc/nginx/conf.d/default.conf > /tmp/default.conf
+envsubst '${BACKEND_URL} ${API_UPSTREAM} ${SSL_CERT_PATH} ${SSL_KEY_PATH}' < /etc/nginx/conf.d/default.conf > /tmp/default.conf
 cat /tmp/default.conf > /etc/nginx/conf.d/default.conf
 
 echo "[entrypoint] Nginx /api/ -> $API_UPSTREAM   /auth/ -> $BACKEND_URL"

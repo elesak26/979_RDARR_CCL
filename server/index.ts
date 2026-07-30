@@ -1,7 +1,13 @@
 import path from 'path';
+import tls from 'tls';
 import dotenv from 'dotenv';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// Enforce TLS 1.2 minimum for all outbound Node.js connections (MSAL,
+// any fetch-based auth flows, pg when DB_SSL=require). TLS 1.3 is negotiated
+// automatically when both sides support it.
+tls.DEFAULT_MIN_VERSION = 'TLSv1.2';
 
 import express from 'express';
 import helmet from 'helmet';
@@ -17,6 +23,7 @@ import { msalEnabled, assertConfigIfEnabled as assertMsalConfig } from './lib/ms
 import { authMiddleware } from './middleware/auth';
 import { errorHandler } from './middleware/error-handler';
 import { generalLimiter } from './middleware/rate-limit';
+import { ipWhitelistMiddleware } from './middleware/ip-whitelist';
 
 import healthRouter from './routes/health';
 import authRouter from './routes/auth';
@@ -53,6 +60,9 @@ logger.info(
 preloadGroupMappings().catch(() => {});
 
 const app = express();
+
+// ── IP Whitelist (must run before everything else) ───────────────────────────
+app.use(ipWhitelistMiddleware as express.RequestHandler);
 
 // ── Security & middleware ────────────────────────────────────────────────────
 app.use(helmet());
