@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, QueryResultRow } from 'pg';
 import { logger } from './logger';
 
 export interface QueryResult<T = Record<string, unknown>> {
@@ -33,7 +33,7 @@ export const pool = new Pool(buildPoolConfig());
 
 pool.on('error', (err) => logger.error({ err }, 'Unexpected pg pool error'));
 
-export async function query<T = Record<string, unknown>>(
+export async function query<T extends QueryResultRow = Record<string, unknown>>(
   text: string,
   params?: unknown[]
 ): Promise<{ rows: T[]; rowCount: number | null }> {

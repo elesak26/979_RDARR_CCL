@@ -19,7 +19,15 @@ FROM node:22-alpine
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# Drop the npm CLI once the dependencies are installed. Nothing at runtime uses
+# it (docker-entrypoint.sh runs `node` only), but Defender scans npm's own
+# bundled node_modules — tar, @sigstore/core, picomatch, ip-address,
+# brace-expansion — and reported 10 CVEs against them, including the only
+# Critical. Those are npm's dependencies, not the application's; removing the
+# CLI removes them outright instead of chasing fixes we do not control.
+RUN npm ci --omit=dev \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+           /root/.npm /usr/local/share/man
 
 # Compiled app (includes dist/scripts/run-migrations.js)
 COPY --from=builder /app/dist ./dist

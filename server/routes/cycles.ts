@@ -3,11 +3,11 @@ import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { uploadFileFilter } from '../lib/uploadFilter';
+import { persistUpload, sendDownload, removeFile, localCopy } from '../lib/fileStore';
 import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
-import { userHasRole } from '../middleware/authorization';
 
 interface ChecklistEntry {
   buCode: string;
@@ -290,7 +290,7 @@ router.post('/api/cycles', async (req: Request, res: Response, next: NextFunctio
 
 // PUT /api/cycles/:id/submit — draft → pending_approval (Validator)
 router.put('/api/cycles/:id/submit', async (req: Request, res: Response, next: NextFunction) => {
-  if (!userHasRole(req.user, 'Validator')) {
+  if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -392,7 +392,7 @@ router.put('/api/cycles/:id/reject', async (req: Request, res: Response, next: N
 
 // PUT /api/cycles/:id/distribute — published → distributed (Validator)
 router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, next: NextFunction) => {
-  if (!userHasRole(req.user, 'Validator')) {
+  if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -432,9 +432,9 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
       let usedXlsx = false;
 
       if (checklistFile) {
+        const copy = await localCopy(checklistFile);
         try {
-          const filePath = path.join(UPLOAD_DIR, checklistFile);
-          const xlsxRows = parseChecklistXlsx(filePath);
+          const xlsxRows = parseChecklistXlsx(copy.path);
           for (const { itemNumber, entries } of xlsxRows) {
             const qInfo = questionMap.get(itemNumber);
             if (!qInfo) continue;
@@ -450,6 +450,8 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
           usedXlsx = rows.length > 0;
         } catch (_err) {
           // XLSX parse failed — fall through to hardcoded map
+        } finally {
+          copy.cleanup();
         }
       }
 
@@ -541,7 +543,7 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
 // PUT /api/cycles/:id/close — distributed → closed (Validator)
 // Force-closes the cycle: any in-flight responses or validations are cancelled.
 router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: NextFunction) => {
-  if (!userHasRole(req.user, 'Validator')) {
+  if (req.user?.role !== 'Validator') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -605,53 +607,36 @@ router.put('/api/cycles/:id/close', async (req: Request, res: Response, next: Ne
   }
 });
 
-// DELETE /api/cycles/:id
-// draft     → Admin only
-// published → Validator only
-// distributed (Active) → Senior Validator only
+// DELETE /api/cycles/:id — delete a draft or published cycle (Admin only)
 router.delete('/api/cycles/:id', async (req: Request, res: Response, next: NextFunction) => {
-  const role = req.user?.role;
+  if (req.user?.role !== 'Admin') {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
   try {
     const { id } = req.params;
-
-    // Fetch the current status first so we can enforce per-status role rules
-    const cycleRes = await query<{ status: string; name: string }>(
-      `SELECT status, name FROM questionnaire_cycles WHERE id = $1`,
-      [id]
-    );
-    if (cycleRes.rows.length === 0) {
-      res.status(404).json({ error: 'Cycle not found' });
-      return;
-    }
-    const { status, name } = cycleRes.rows[0];
-
-    const allowed =
-      (status === 'draft'       && role === 'Admin') ||
-      (status === 'published'   && role === 'Validator') ||
-      (status === 'distributed' && role === 'Senior Validator');
-
-    if (!allowed) {
-      res.status(403).json({ error: 'Forbidden' });
-      return;
-    }
-
     const result = await query(
-      `DELETE FROM questionnaire_cycles WHERE id = $1 RETURNING id, name`,
+      `DELETE FROM questionnaire_cycles WHERE id = $1 AND status IN ('draft', 'published')`,
       [id]
     );
-    logAudit({ action: 'cycle_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { name } });
+    if (result.rows.length === 0) {
+      res.status(400).json({ error: 'Cycle not found or cannot be deleted in its current status' });
+      return;
+    }
+    logAudit({ action: 'cycle_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { name: result.rows[0].name } });
     res.json({ deleted: true, id: result.rows[0].id, name: result.rows[0].name });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/cycles/:id/checklist — upload checklist file (Validator only, draft cycles)
+// POST /api/cycles/:id/checklist — upload checklist file (Admin or Validator on draft cycles)
 router.post(
   '/api/cycles/:id/checklist',
   checklistUpload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator')) {
+    const role = req.user?.role;
+    if (role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -676,12 +661,9 @@ router.post(
         return;
       }
 
-      // Remove old file from disk now that we know the update will proceed
+      // Remove old file (Blob or disk) now that we know the update will proceed
       const old = existing.rows[0].checklist_file;
-      if (old) {
-        const oldPath = path.join(UPLOAD_DIR, old);
-        fs.unlink(oldPath, () => {});
-      }
+      if (old) await removeFile(old);
 
       const result = await query(
         `UPDATE questionnaire_cycles SET checklist_file = $1, checklist_original_name = $2, updated_at = NOW() WHERE id = $3
@@ -692,7 +674,8 @@ router.post(
         res.status(404).json({ error: 'Cycle not found' });
         return;
       }
-      // Parse column K weights and upsert into ccl_item_weights
+      // Parse column K weights and upsert into ccl_item_weights. Read from the
+      // multer temp (still on local disk) BEFORE moving it into the store.
       try {
         const weights = parseWeightsFromChecklist(path.join(UPLOAD_DIR, req.file.filename));
         if (weights.length > 0) {
@@ -709,6 +692,9 @@ router.post(
         // Non-fatal — log but don't block the upload response
         console.error('ccl_item_weights upsert failed:', weightErr);
       }
+
+      // Now move the checklist into the store (Blob in prod, no-op on disk).
+      await persistUpload(path.join(UPLOAD_DIR, req.file.filename), req.file.filename, req.file.mimetype);
 
       logAudit({ action: 'checklist_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { file_name: req.file.originalname } });
       res.json({ ok: true, checklist_file: req.file.filename, original_name: req.file.originalname });
@@ -735,14 +721,9 @@ router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next
       res.status(404).json({ error: 'No checklist uploaded for this cycle' });
       return;
     }
-    const filePath = path.join(UPLOAD_DIR, checklist_file);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ error: 'File not found on disk' });
-      return;
-    }
     // Derive original name from stored filename (strip timestamp prefix)
     const originalName = checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ');
-    res.download(filePath, originalName || `${cycleName}_checklist.xlsx`);
+    await sendDownload(res, checklist_file, originalName || `${cycleName}_checklist.xlsx`);
   } catch (err) {
     next(err);
   }
@@ -750,7 +731,8 @@ router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next
 
 // GET /api/cycles/:id/comments — list comments (Validator, Senior Validator, Admin)
 router.get('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
-  if (!userHasRole(req.user, 'Validator') && !userHasRole(req.user, 'Senior Validator') && !userHasRole(req.user, 'Admin')) {
+  const role = req.user?.role;
+  if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -771,7 +753,8 @@ router.get('/api/cycles/:id/comments', async (req: Request, res: Response, next:
 
 // POST /api/cycles/:id/comments — post a comment (Validator or Senior Validator, pending_approval only)
 router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
-  if (!userHasRole(req.user, 'Validator') && !userHasRole(req.user, 'Senior Validator')) {
+  const role = req.user?.role;
+  if (role !== 'Validator' && role !== 'Senior Validator') {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -800,7 +783,7 @@ router.post('/api/cycles/:id/comments', async (req: Request, res: Response, next
       `INSERT INTO cycle_comments (cycle_id, user_id, user_name, user_role, body)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, user_id, user_name, user_role, body, created_at`,
-      [id, req.user?.id, req.user?.display_name, req.user?.role, body.trim()]
+      [id, req.user?.id, req.user?.display_name, role, body.trim()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {

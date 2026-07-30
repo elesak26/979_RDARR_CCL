@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, getCurrentUserId } from '../api/client';
+import { api } from '../api/client';
 import type { User, Cycle, CycleComment, Response, Validation } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import Reports from './Reports';
@@ -319,19 +319,10 @@ export default function Dashboard({ currentUser }: Props) {
                   </span>
                   <button
                     onClick={() => {
-                      const userId = getCurrentUserId();
-                      const headers: Record<string, string> = {};
-                      if (userId) headers['X-User-Id'] = userId;
-                      fetch(`/api/cycles/${viewerCycleId}/checklist`, { headers })
-                        .then(r => r.blob())
-                        .then(blob => {
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = selectedCycle.checklist_original_name ?? displayFileName(selectedCycle.checklist_file);
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        });
+                      api.download(
+                        `/cycles/${viewerCycleId}/checklist`,
+                        selectedCycle.checklist_original_name ?? displayFileName(selectedCycle.checklist_file)
+                      ).catch(e => setError(e instanceof Error ? e.message : 'Download failed'));
                     }}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 0,

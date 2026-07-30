@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, getCurrentUserId } from '../api/client';
+import { api } from '../api/client';
 import type { Cycle, CycleComment, User } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import { displayFileName } from '../utils/displayFileName';
@@ -170,20 +170,15 @@ export default function CycleList({ currentUser }: Props) {
 
   async function handleChecklistDownload(c: Cycle) {
     setChecklistMenuOpen(null);
-    const headers: Record<string, string> = {};
-    const uid = getCurrentUserId();
-    if (uid) headers['X-User-Id'] = uid;
-    const res = await fetch(`/api/cycles/${c.id}/checklist`, { headers });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = c.checklist_original_name ?? displayFileName(c.checklist_file ?? '');
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    try {
+      await api.download(
+        `/cycles/${c.id}/checklist`,
+        c.checklist_original_name ?? displayFileName(c.checklist_file ?? '')
+      );
+    } catch (e) {
+      // Previously `if (!res.ok) return` — the click looked like it did nothing.
+      setError(e instanceof Error ? e.message : 'Download failed');
+    }
   }
 
   async function handleChecklistUpload(cycleId: number, file: File) {
@@ -487,14 +482,8 @@ export default function CycleList({ currentUser }: Props) {
                         </button>
                       )}
 
-                      {/* Delete buttons: role+status gated */}
-                      {role === 'Admin' && c.status === 'draft' && (
-                        <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
-                      )}
-                      {role === 'Validator' && c.status === 'published' && (
-                        <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
-                      )}
-                      {role === 'Senior Validator' && c.status === 'distributed' && (
+                      {/* Admin: delete draft or published cycle */}
+                      {role === 'Admin' && (c.status === 'draft' || c.status === 'published') && (
                         <button className="btn danger" onClick={() => { setActionError(null); setDeletingCycle(c); }}>Delete</button>
                       )}
 

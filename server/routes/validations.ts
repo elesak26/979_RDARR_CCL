@@ -3,10 +3,10 @@ import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { uploadFileFilter } from '../lib/uploadFilter';
+import { persistUpload, sendDownload, removeFile } from '../lib/fileStore';
 import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
-import { userHasRole } from '../middleware/authorization';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('Could not create UPLOAD_DIR ' + UPLOAD_DIR, e); }
@@ -126,7 +126,8 @@ router.get(
 router.put(
   '/api/cycles/:cycleId/validations/:id',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator') && !userHasRole(req.user, 'Senior Validator')) {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -139,7 +140,7 @@ router.put(
       };
 
       // Senior Validators cannot edit score, justification, or additional_controls — Validator only
-      const isSeniorValidator = userHasRole(req.user, 'Senior Validator') && !userHasRole(req.user, 'Validator');
+      const isSeniorValidator = req.user?.role === 'Senior Validator';
       const scoreValue = isSeniorValidator ? null : (validation_score ?? null);
       const justificationValue = isSeniorValidator ? null : (justification ?? null);
       const additionalControlsValue = isSeniorValidator ? null : (additional_controls ?? null);
@@ -175,9 +176,7 @@ router.put(
         res.status(404).json({ error: 'Validation not found' });
         return;
       }
-      const vuQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [result.rows[0].question_id]);
-      const vuItemNumber = vuQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, item_number: vuItemNumber, bu_code: result.rows[0].bu_code ?? null, old_score: oldScore, new_score: result.rows[0].validation_score ?? null, justification: justificationValue ?? null, additional_controls: additionalControlsValue ?? null } });
+      logAudit({ action: 'validation_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, old_score: oldScore, new_score: result.rows[0].validation_score ?? null, justification: justificationValue ?? null, additional_controls: additionalControlsValue ?? null } });
       res.json(result.rows[0]);
     } catch (err) {
       next(err);
@@ -189,7 +188,8 @@ router.put(
 router.put(
   '/api/cycles/:cycleId/validations/:id/close',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator')) {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -222,9 +222,7 @@ router.put(
         res.status(409).json({ error: 'Validation already completed by another user.' });
         return;
       }
-      const vsaQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [result.rows[0].question_id]);
-      const vsaItemNumber = vsaQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, item_number: vsaItemNumber, bu_code: result.rows[0].bu_code ?? null, new_score: result.rows[0].validation_score ?? null } });
+      logAudit({ action: 'validation_submitted_for_approval', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null } });
 
       // Notify Senior Validators that a validation item is pending their approval
       const cycleRowV = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
@@ -232,7 +230,7 @@ router.put(
       const riskLabel = result.rows[0].material_risk ? ` — ${result.rows[0].material_risk}` : '';
       notifyRole('Senior Validator',
         `Validation item pending approval — ${cycleNameV}`,
-        `Item #${vsaItemNumber} (${result.rows[0].bu_code}${riskLabel}) in cycle "${cycleNameV}" has been submitted for your approval.`,
+        `Item #${result.rows[0].item_number} (${result.rows[0].bu_code}${riskLabel}) in cycle "${cycleNameV}" has been submitted for your approval.`,
         parseInt(String(cycleId), 10),
         `/validation-overview/${cycleId}/${result.rows[0].question_id}`
       ).catch(() => {});
@@ -249,7 +247,7 @@ router.get(
   '/api/cycles/:cycleId/validation-overview',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator') {
+    if (role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -352,7 +350,7 @@ router.put(
   '/api/cycles/:cycleId/questions/:questionId/approve',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator') {
+    if (role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -381,9 +379,7 @@ router.put(
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
         return;
       }
-      const bvaQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [questionId]);
-      const bvaItemNumber = bvaQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), item_number: bvaItemNumber, bulk: true, new_score: result.rows[0]?.validation_score ?? null } });
+      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, new_score: result.rows[0]?.validation_score ?? null } });
 
       // Auto-close cycle only when ALL responses are submitted AND all validations are closed.
       // Checking validations alone is insufficient: if a BU never submitted, no validation row
@@ -417,7 +413,7 @@ router.put(
   '/api/cycles/:cycleId/questions/:questionId/reject',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator') {
+    if (role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -449,9 +445,7 @@ router.put(
         res.status(400).json({ error: 'No pending_approval validations found for this question' });
         return;
       }
-      const bvrQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [questionId]);
-      const bvrItemNumber = bvrQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), item_number: bvrItemNumber, bulk: true, new_score: result.rows[0]?.validation_score ?? null, rejection_comment: comment ?? null } });
+      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: result.rows.map(r => r.id).join(','), cycle_id: parseInt(String(cycleId), 10), details: { question_id: parseInt(String(questionId), 10), bulk: true, new_score: result.rows[0]?.validation_score ?? null, rejection_comment: comment ?? null } });
 
       // Notify Validators — send one notification per rejected validation so each links to its detail page
       const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
@@ -477,7 +471,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id/approve',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator') {
+    if (role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -512,9 +506,7 @@ router.put(
         res.status(400).json({ error: 'Validation not found or not pending approval' });
         return;
       }
-      const ivaQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [result.rows[0].question_id]);
-      const ivaItemNumber = ivaQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, item_number: ivaItemNumber, bu_code: result.rows[0].bu_code ?? null, new_score: result.rows[0].validation_score ?? null } });
+      logAudit({ action: 'validation_approved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null } });
 
       // Auto-close cycle only when ALL responses are submitted AND all validations are closed.
       // Checking validations alone is insufficient: if a BU never submitted, no validation row
@@ -548,7 +540,7 @@ router.put(
   '/api/cycles/:cycleId/validations/:id/reject',
   async (req: Request, res: Response, next: NextFunction) => {
     const role = req.user?.role;
-    if (role !== 'Senior Validator') {
+    if (role !== 'Senior Validator' && role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -584,16 +576,14 @@ router.put(
         res.status(400).json({ error: 'Validation not found or not pending approval' });
         return;
       }
-      const ivrQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [result.rows[0].question_id]);
-      const ivrItemNumber = ivrQRow.rows[0]?.item_number ?? null;
-      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, item_number: ivrItemNumber, bu_code: result.rows[0].bu_code ?? null, new_score: result.rows[0].validation_score ?? null, rejection_comment: comment ?? null } });
+      logAudit({ action: 'validation_rejected', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'validation', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { question_id: result.rows[0].question_id, new_score: result.rows[0].validation_score ?? null, rejection_comment: comment ?? null } });
 
       // Notify Validators that a validation item was rejected and needs revision
       const cycleRowR = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
       const cycleNameR = cycleRowR.rows[0]?.name ?? `Cycle ${cycleId}`;
       notifyRole('Validator',
         `Validation item rejected — ${cycleNameR}`,
-        `Item #${ivrItemNumber} (${result.rows[0].bu_code}) in cycle "${cycleNameR}" was rejected by the Senior Validator and requires revision.`,
+        `Item #${result.rows[0].item_number} (${result.rows[0].bu_code}) in cycle "${cycleNameR}" was rejected by the Senior Validator and requires revision.`,
         parseInt(String(cycleId), 10),
         `/validation/${result.rows[0].id}`
       ).catch(() => {});
@@ -623,12 +613,12 @@ router.get(
   }
 );
 
-// POST /api/cycles/:cycleId/validations/:id/attachments — Validator only
+// POST /api/cycles/:cycleId/validations/:id/attachments — Validator or Senior Validator
 router.post(
   '/api/cycles/:cycleId/validations/:id/attachments',
   valAttachUpload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator')) {
+    if (req.user?.role !== 'Validator' && req.user?.role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -650,6 +640,9 @@ router.post(
         res.status(409).json({ error: `A file named "${decodedName}" is already attached to this validation.` });
         return;
       }
+
+      // Move the multer temp file into the store (Blob in prod, no-op on disk).
+      await persistUpload(req.file.path, req.file.filename, req.file.mimetype);
 
       const metaResult = await query<{ question_id: number; bu_code: string | null; cycle_name: string | null; item_number: number | null }>(
         `SELECT v.question_id, v.bu_code, c.name AS cycle_name, q.item_number
@@ -674,11 +667,11 @@ router.post(
   }
 );
 
-// DELETE /api/cycles/:cycleId/validations/:id/attachments/:attachId — Validator only
+// DELETE /api/cycles/:cycleId/validations/:id/attachments/:attachId — Validator or Senior Validator
 router.delete(
   '/api/cycles/:cycleId/validations/:id/attachments/:attachId',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator')) {
+    if (req.user?.role !== 'Validator' && req.user?.role !== 'Senior Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -692,7 +685,7 @@ router.delete(
         res.status(404).json({ error: 'Attachment not found' });
         return;
       }
-      fs.unlink(path.join(UPLOAD_DIR, result.rows[0].file_path), () => {});
+      await removeFile(result.rows[0].file_path);
       res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -715,7 +708,7 @@ router.get(
         return;
       }
       const { file_name, file_path } = result.rows[0];
-      res.download(path.join(UPLOAD_DIR, file_path), file_name);
+      await sendDownload(res, file_path, file_name);
     } catch (err) {
       next(err);
     }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { api, setCurrentUserId, getCurrentUserId } from '../api/client';
-import { getIdentity, identityLabel, isAuthEnabled, logout } from '../auth/oidc';
+import { getIdentity, identityLabel, isAuthEnabled, isPersonaMode, logout } from '../auth/oidc';
 import type { User, UserRole } from '../types';
 
 // ── In-app notifications ──────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ const ValidationOverviewDetail = lazy(() => import('../views/ValidationOverviewD
 
 function hasRole(user: User | null, ...roles: UserRole[]): boolean {
   if (!user) return false;
-  return roles.includes(user.role) || (user.secondary_role != null && roles.includes(user.secondary_role));
+  return roles.includes(user.role);
 }
 
 const ROLE_ORDER: UserRole[] = ['Admin', 'Validator', 'Senior Validator', 'Responder', 'Viewer'];
@@ -274,34 +274,34 @@ export default function App() {
         <span className="toolbar__title">RVMT — RDARR Validation Management Tool</span>
         <span className="toolbar__spacer" />
 
-        {/* Dev user switcher */}
-        <select
-          className="toolbar__user-select"
-          value={getCurrentUserId() || currentUser?.id || ''}
-          onChange={e => handleUserSwitch(e.target.value)}
-          title="Dev: switch user"
-        >
-          {ROLE_ORDER.map(role => {
-            const roleUsers = grouped.get(role) ?? [];
-            if (!roleUsers.length) return null;
-            return (
-              <optgroup key={role} label={role}>
-                {roleUsers.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.display_name}{u.primary_unit_code ? ` · ${u.primary_unit_code}` : ''}
-                  </option>
-                ))}
-              </optgroup>
-            );
-          })}
-        </select>
+        {/* Dev user switcher — only when the UAT persona mode is active. With it
+            off (directory-driven roles) there is nothing to switch to, so hide it. */}
+        {isPersonaMode() && (
+          <select
+            className="toolbar__user-select"
+            value={getCurrentUserId() || currentUser?.id || ''}
+            onChange={e => handleUserSwitch(e.target.value)}
+            title="Dev: switch user"
+          >
+            {ROLE_ORDER.map(role => {
+              const roleUsers = grouped.get(role) ?? [];
+              if (!roleUsers.length) return null;
+              return (
+                <optgroup key={role} label={role}>
+                  {roleUsers.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.display_name}{u.primary_unit_code ? ` · ${u.primary_unit_code}` : ''}
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
+          </select>
+        )}
 
         {currentUser && (
           <div className="toolbar__user">
             <span className="toolbar__role">{currentUser.role}</span>
-            {currentUser.secondary_role && (
-              <span className="toolbar__role" style={{ opacity: 0.8 }}>{currentUser.secondary_role}</span>
-            )}
             <span>{currentUser.display_name}</span>
             {currentUser.primary_unit_code && (
               <span className="toolbar__unit">{currentUser.primary_unit_code}</span>

@@ -24,8 +24,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
         // Returning from NBG Identity with ?code= ?
         const handled = await completeLoginIfCallback();
         if (cancelled) return;
-        const session = await fetchSession();
-        if (handled || session.authenticated) {
+        if (handled) {
+          setStatus('authed');
+          return;
+        }
+        // Ask the Core whether a session cookie is already live. The browser
+        // holds no token to inspect, which is the point — only the server knows.
+        const session = await fetchSession(true);
+        if (cancelled) return;
+        if (session.authenticated) {
           setStatus('authed');
           return;
         }

@@ -1,0 +1,153 @@
+parameters:
+- name: choosePipeline
+  displayName: Choose pipeline to run
+  type: string
+  values:
+  - startApplication
+  - restartApplication
+  - stopApplication
+  - getConfiguration
+  - setConfiguration
+  - delConfiguration
+  - buildAndPushNewImage
+  - changeImage
+  default: getConfiguration
+- name: filePath
+  displayName: "[=] setConfiguration only. The path to the file itself from root of directory ( foo/bar/configuration.yaml )"
+  type: string
+  default: configuration/rdarr-ui/settings.QA.json
+- name: settingsToDelete
+  displayName: "[=] delConfiguration only. The settings you want to remove space seperated like ( FOO hello )"
+  type: string
+  default: " "
+- name: imageRepositoryAndTag
+  displayName: "[=] buildAndPushNewImage only. the image repository followed by the tag like ( bd/pothenesxes:v3.1 )"
+  type: string
+  default: ai/rdarr-ui:latest
+- name: dockerfilePath
+  displayName: "[=] buildAndPushNewImage only. the path to the Dockerfile from the root of the project repo ( foo/bar/Dockerfile )"
+  type: string
+  default: Dockerfile
+- name: changeImageOnWebapp
+  displayName: "[=] buildAndPushNewImage only. Check to also change the image on the webapp itself"
+  type: boolean
+  default: false
+trigger: none
+resources:
+  repositories:
+    - repository: pipelines
+      type: git
+      name: DevOps_Private/pipelines
+variables:
+- group: vg-nbg-webapp-rdarr-ui-we-qa-01
+- name: serviceConnection 
+  value: $[format(replace(replace(eq(variables['environment'], 'dev'), True, '{0}'), False, '{1}'), 'bicep_SC2', 'nbg-IDP-MachineLearning-QA-01')]
+- name: environment
+  value: qa
+- name: "agentPool"
+  value: "nbg-IDP-CommonServices-QA-01"
+- name: devServiceConnection
+  value: bicep_SC2
+- name: containerRegistry
+  value: $[format(replace(replace(eq(variables['environment'], 'qa'), True, '{0}'), False, '{1}'), variables['qaContainerRegistry'], variables['devContainerRegistry'])]
+
+jobs:
+### APPLICATION ###
+- ${{ if eq(parameters.choosePipeline, 'startApplication') }}:
+  - template: templates/application/app-service-start.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      environment: $(environment)
+      resourceGroupName: $(resourceGroupName)
+      subscriptionName: $(subscriptionName)
+      serviceConnection: $(serviceConnection)
+      type: $(type)
+
+- ${{ if eq(parameters.choosePipeline, 'restartApplication') }}:
+  - template: templates/application/app-service-restart.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      environment: $(environment)
+      resourceGroupName: $(resourceGroupName)
+      subscriptionName: $(subscriptionName)
+      serviceConnection: $(serviceConnection)
+      type: $(type)
+
+- ${{ if eq(parameters.choosePipeline, 'stopApplication') }}:
+  - template: templates/application/app-service-stop.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      environment: $(environment)
+      resourceGroupName: $(resourceGroupName)
+      subscriptionName: $(subscriptionName)
+      serviceConnection: $(serviceConnection)
+      type: $(type)
+
+### IMAGE ###
+- ${{ if eq(parameters.choosePipeline, 'buildAndPushNewImage') }}:
+  - template: templates/image-tag-templates/master-docker-build.yaml@pipelines
+    parameters:
+      buildStrategy: 'dev-and-qa'
+      appName: $(appName)
+      environment: $(environment)
+      resourceGroupName: $(resourceGroupName)
+      subscriptionName: $(subscriptionName)
+      devServiceConnection: $(devServiceConnection)
+      qaServiceConnection: $(serviceConnection)
+      qaContainerRegistry: $(qaContainerRegistry)
+      devContainerRegistry: $(devContainerRegistry)
+      changeImageOnWebapp: ${{ parameters.changeImageOnWebapp }}
+      imageRepositoryAndTag: ${{ parameters.imageRepositoryAndTag }}
+      dockerFile: ${{ parameters.dockerfilePath }}
+      repo: $(repo)
+      branch: $(branch)
+      project: $(project)
+      agentPool: $(agentPool)
+
+
+### CONFIGURATION ###
+- ${{ if eq(parameters.choosePipeline, 'getConfiguration') }}:
+  - template: templates/application/app-get-config.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      resourceGroupName: $(resourceGroupName)
+      subscriptionName: $(subscriptionName)
+      environment: $(environment)
+      serviceConnection: $(serviceConnection)
+      type: $(type)
+
+- ${{ if eq(parameters.choosePipeline, 'setConfiguration') }}:
+  - template: templates/application/app-set-config.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      resourceGroupName: $(resourceGroupName)
+      environment: $(environment)
+      serviceConnection: $(serviceConnection)
+      subscriptionName: $(subscriptionName)
+      filePath: ${{ parameters.filePath }}
+      repo: $(repo)
+      branch: $(branch)
+      project: $(project)
+      type: $(type)
+
+- ${{ if eq(parameters.choosePipeline, 'delConfiguration') }}:
+  - template: templates/application/app-delete-config.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      resourceGroupName: $(resourceGroupName)
+      environment: $(environment)
+      serviceConnection: $(serviceConnection)
+      subscriptionName: $(subscriptionName)
+      type: $(type)
+      settingNames: ${{ parameters.settingsToDelete }}
+
+
+- ${{ if eq(parameters.choosePipeline, 'changeImage') }}:
+  - template: templates/application/change-image.yaml@pipelines
+    parameters:
+      appName: $(appName)
+      resourceGroupName: $(resourceGroupName)
+      serviceConnection: $(serviceConnection)
+      subscriptionName: $(subscriptionName)
+      imageName: ${{ parameters.imageRepositoryAndTag }}
+      containerRegistry: $(containerRegistry)

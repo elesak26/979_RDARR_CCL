@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, downloadLinkProps } from '../api/client';
 import type { User, Cycle, Response, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import { displayFileName } from '../utils/displayFileName';
@@ -594,11 +594,8 @@ export default function MyAssignments({ currentUser }: Props) {
                                     </div>
                                   </div>
                                   <a
-                                    href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                    onClick={e => e.stopPropagation()}
+                                    {...downloadLinkProps(`/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`, a.file_name, setError)}
+                                    style={{ color: 'var(--accent)', fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer' }}
                                   >
                                     Download
                                   </a>

@@ -3,6 +3,7 @@ import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { uploadFileFilter } from '../lib/uploadFilter';
+import { persistUpload, sendDownload, removeFile, UPLOAD_DIR } from '../lib/fileStore';
 import { encryptFile, decryptFileTo, fileEncryptionAvailable } from '../lib/fileEncryption';
 import { scanFile } from '../lib/clamScan';
 import { query } from '../db';
@@ -10,7 +11,6 @@ import { logAudit } from '../audit';
 
 const router = Router();
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
 try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch (e) { console.error('Could not create UPLOAD_DIR ' + UPLOAD_DIR, e); }
 
 // Multer/busboy may deliver filenames as latin1-misread UTF-8 bytes.
@@ -19,7 +19,6 @@ try { if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true
 const decodeFilename = (name: string) => {
   const codePoints = Array.from(name).map(c => c.codePointAt(0) ?? 0);
   console.log('[decodeFilename] raw:', JSON.stringify(name), 'codePoints:', JSON.stringify(codePoints));
-  // If any codepoint > 0xFF the string is already proper Unicode - leave it alone
   if (codePoints.some(cp => cp > 0xff)) {
     console.log('[decodeFilename] already unicode, returning as-is');
     return name;
@@ -83,7 +82,7 @@ router.post(
       const file = req.file;
       const decodedName = decodeFilename(file.originalname);
 
-      // Duplicate-file check: same filename already attached to this response
+      // Duplicate-file check
       const existing = await query<{ id: number }>(
         `SELECT id FROM response_attachments WHERE response_id = $1 AND file_name = $2`,
         [responseId, decodedName]
@@ -94,8 +93,8 @@ router.post(
         return;
       }
 
-      // Malware scan — runs on the plaintext file before DB insert or encryption.
-      // Infected files are deleted immediately; the request is rejected with 422.
+      // 1. Malware scan on the plaintext file (before encryption or Blob upload).
+      //    Infected files are deleted; request rejected with 422.
       const scan = await scanFile(file.path);
       if (!scan.clean && !scan.unavailable) {
         fs.unlink(file.path, () => {});
@@ -113,27 +112,9 @@ router.post(
         return;
       }
 
-      const result = await query(
-        `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [responseId, decodedName, file.filename, req.user?.display_name ?? null]
-      );
-      const saved = result.rows[0];
-
-      const { cycleId } = req.params;
-      const respMeta = await query<{ bu_code: string; question_id: number; item_number: number }>(
-        `SELECT r.bu_code, r.question_id, q.item_number
-         FROM responses r JOIN questions q ON q.id = r.question_id
-         WHERE r.id = $1`,
-        [responseId]
-      );
-      const meta = respMeta.rows[0];
-
-      // Encrypt the file in-place after it has been persisted to the DB so a
-      // failed encryption leaves the DB record intact and the error surfaces
-      // cleanly; the file is removed on encrypt failure to avoid leaving a
-      // plaintext copy on disk.
+      // 2. Encrypt in-place on disk (AES-256-GCM) before the file leaves the
+      //    local temp path. In blob mode the encrypted bytes go into Blob Storage;
+      //    in disk mode they stay on disk. Either way, plaintext never persists.
       if (fileEncryptionAvailable()) {
         try {
           await encryptFile(file.path, file.path);
@@ -143,22 +124,18 @@ router.post(
         }
       }
 
-      logAudit({
-        action: 'attachment_uploaded',
-        actor_id: req.user?.id,
-        actor_name: req.user?.display_name,
-        actor_role: req.user?.role,
-        entity_type: 'response',
-        entity_id: String(responseId),
-        cycle_id: cycleId ? parseInt(String(cycleId), 10) : null,
-        details: {
-          attachment_id: saved.id,
-          file_name: decodedName,
-          bu_code: meta?.bu_code ?? null,
-          question_id: meta?.question_id ?? null,
-          item_number: meta?.item_number ?? null,
-        },
-      });
+      // 3. Move to the configured store (Blob in prod, no-op on disk).
+      await persistUpload(file.path, file.filename, file.mimetype);
+
+      const result = await query(
+        `INSERT INTO response_attachments (response_id, file_name, file_path, uploaded_by)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [responseId, decodedName, file.filename, req.user?.display_name ?? null]
+      );
+      const saved = result.rows[0];
+
+      logAudit({ action: 'attachment_uploaded', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(saved.id), details: { response_id: responseId, file_name: decodedName } });
       res.status(201).json(saved);
     } catch (err) {
       next(err);
@@ -176,42 +153,16 @@ router.delete(
     }
     try {
       const { attachId: attachmentId, id: responseId } = req.params;
-      const delMeta = await query<{ file_path: string; file_name: string }>(
-        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path, file_name`,
+      const result = await query<{ file_path: string }>(
+        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path`,
         [attachmentId]
       );
-      if (delMeta.rows.length === 0) {
+      if (result.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });
         return;
       }
-      // Best-effort file removal
-      const filePath = path.join(UPLOAD_DIR, delMeta.rows[0].file_path);
-      fs.unlink(filePath, () => {});
-
-      const { cycleId: delCycleId } = req.params;
-      const delRespMeta = await query<{ bu_code: string; question_id: number; item_number: number }>(
-        `SELECT r.bu_code, r.question_id, q.item_number
-         FROM responses r JOIN questions q ON q.id = r.question_id
-         WHERE r.id = $1`,
-        [responseId]
-      );
-      const delMeta2 = delRespMeta.rows[0];
-
-      logAudit({
-        action: 'attachment_deleted',
-        actor_id: req.user?.id,
-        actor_name: req.user?.display_name,
-        actor_role: req.user?.role,
-        entity_type: 'response',
-        entity_id: String(responseId),
-        cycle_id: delCycleId ? parseInt(String(delCycleId), 10) : null,
-        details: {
-          file_name: delMeta.rows[0].file_name,
-          bu_code: delMeta2?.bu_code ?? null,
-          question_id: delMeta2?.question_id ?? null,
-          item_number: delMeta2?.item_number ?? null,
-        },
-      });
+      await removeFile(result.rows[0].file_path);
+      logAudit({ action: 'attachment_deleted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'attachment', entity_id: String(attachmentId), details: { response_id: String(responseId) } });
       res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -234,10 +185,12 @@ router.get(
         return;
       }
       const { file_name, file_path } = result.rows[0];
-      const full = path.join(UPLOAD_DIR, file_path);
+      // Decrypt (AES-256-GCM) while streaming to the response.
+      // sendDownload handles Blob vs disk; decryptFileTo handles encrypted vs legacy plaintext.
+      const fullPath = path.join(UPLOAD_DIR, file_path);
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file_name)}"`);
       res.setHeader('Content-Type', 'application/octet-stream');
-      await decryptFileTo(full, res);
+      await decryptFileTo(fullPath, res);
       res.end();
     } catch (err) {
       next(err);

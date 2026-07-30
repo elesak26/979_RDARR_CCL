@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, downloadLinkProps } from '../api/client';
 import type { Validation, Response, Cycle, User, Attachment } from '../types';
 import WorkflowBadge from '../components/common/WorkflowBadge';
 import { displayFileName } from '../utils/displayFileName';
@@ -283,7 +283,8 @@ export default function ValidationDetail() {
 
   // Justification and Additional Controls are Validator-only
   const canEditFields = isValidator && (isInReview || isRejected);
-  const canEdit = canEditFields;
+  // Attachments and other actions still available to Senior Validators on pending_approval
+  const canEdit = canEditFields || (isSeniorValidator && isPendingApproval);
   // Score can only be changed by Validators — Senior Validators see it read-only
   const canEditScore = isValidator && (isInReview || isRejected);
   const hasReturnedResponses = responses.some(r => r.status === 'returned');
@@ -509,9 +510,8 @@ export default function ValidationDetail() {
                         </svg>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <a
-                            href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
-                            target="_blank" rel="noreferrer"
-                            style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                            {...downloadLinkProps(`/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`, a.file_name, setError)}
+                            style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}
                           >
                             {displayFileName(a.file_name)}
                           </a>
@@ -714,9 +714,8 @@ export default function ValidationDetail() {
                 </svg>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <a
-                    href={`/api/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`}
-                    target="_blank" rel="noreferrer"
-                    style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                    {...downloadLinkProps(`/cycles/${cycle?.id}/validations/${validation.id}/attachments/${a.id}/download`, a.file_name, setError)}
+                    style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}
                   >
                     {displayFileName(a.file_name)}
                   </a>
@@ -978,9 +977,8 @@ export default function ValidationDetail() {
                           </svg>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <a
-                              href={`/api/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`}
-                              target="_blank" rel="noreferrer"
-                              style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              {...downloadLinkProps(`/cycles/${r.cycle_id}/responses/${r.id}/attachments/${a.id}/download`, a.file_name, setError)}
+                              style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
                             >
                               {displayFileName(a.file_name)}
                             </a>

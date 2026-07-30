@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { query } from '../db';
 import { logAudit } from '../audit';
-import { userHasRole } from '../middleware/authorization';
 
 const router = Router({ mergeParams: true });
 
@@ -34,7 +33,8 @@ router.get(
 router.post(
   '/api/cycles/:cycleId/applicability',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Admin') && !userHasRole(req.user, 'Validator')) {
+    const role = req.user?.role;
+    if (role !== 'Admin' && role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -71,7 +71,8 @@ router.post(
 router.delete(
   '/api/cycles/:cycleId/applicability/:id',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Admin') && !userHasRole(req.user, 'Validator')) {
+    const role = req.user?.role;
+    if (role !== 'Admin' && role !== 'Validator') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }

@@ -19,6 +19,8 @@ import { pinoHttp } from 'pino-http';
 import { logger } from './logger';
 import { assertBypassFlagsAllowed, APP_ENV, DISABLE_LOGIN, UAT_PERSONA_MODE } from './lib/appEnv';
 import { mappingActive, preloadGroupMappings } from './lib/groupRoles';
+import { assertStorageConfig, usingBlob } from './lib/fileStore';
+import { mailerEnabled, mailerPosture } from './lib/mailer';
 import { msalEnabled, assertConfigIfEnabled as assertMsalConfig } from './lib/msalClient';
 import { authMiddleware } from './middleware/auth';
 import { errorHandler } from './middleware/error-handler';
@@ -45,6 +47,8 @@ import groupMappingsRouter from './routes/group-mappings';
 assertBypassFlagsAllowed();
 // MSAL (Entra) login: if selected, its config must be complete before we bind.
 assertMsalConfig();
+// Blob storage: if selected, it must be configured before we bind.
+assertStorageConfig();
 logger.info(
   {
     appEnv: APP_ENV || '(undeclared — treated as production)',
@@ -52,6 +56,8 @@ logger.info(
     uatPersonaMode: UAT_PERSONA_MODE,
     groupRoleMapping: mappingActive() ? 'entra (DB-backed)' : 'off (persona mode)',
     authProvider: msalEnabled() ? 'entra (MSAL)' : 'oidc',
+    fileStorage: usingBlob() ? 'azure blob' : 'local disk',
+    email: mailerEnabled() ? mailerPosture() : 'off (SMTP not configured)',
   },
   'Authentication posture'
 );

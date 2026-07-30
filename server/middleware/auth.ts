@@ -296,14 +296,14 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     }
     if (user?.is_active === false) {
       res.status(403).json({ error: 'Account is disabled. Contact your administrator.' });
-      return true; // handled (rejected)
+      return false; // rejected — response already sent, caller must NOT call next()
     }
     req.user = user ?? adUser;
     // Mark the global-admin origin so meta-permission routes (group→role mapping)
     // can require it — a business user who holds Admin via a group must not pass.
     req.user.is_global_admin = globalAdmin;
     recordLogin(req, req.user).catch(() => {});
-    return true;
+    return true; // admitted — caller must call next()
   };
 
   // Global-admin allowlist wins over group resolution and over the exactly-one
@@ -311,13 +311,13 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   // 6), so their group memberships — however many — do not gate them. This is
   // also the break-glass path, which must work before the groups exist.
   if (isGlobalAdmin(claimsObj)) {
-    await admitAs({ role: 'Admin', matchedGroup: '(global-admin allowlist)', groups: [] }, true);
+    if (await admitAs({ role: 'Admin', matchedGroup: '(global-admin allowlist)', groups: [] }, true)) return next();
     return;
   }
 
   const resolution = await resolveGroupRole(claimsObj);
   if (resolution.kind === 'one') {
-    await admitAs({ role: resolution.role, matchedGroup: resolution.matchedGroup, groups: resolution.groups });
+    if (await admitAs({ role: resolution.role, matchedGroup: resolution.matchedGroup, groups: resolution.groups })) return next();
     return;
   }
   if (resolution.kind === 'multiple') {

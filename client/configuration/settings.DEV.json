@@ -1,0 +1,9 @@
+{
+  "API_UPSTREAM": "https://nbg-webapp-rdarr-core-we-dev-01.azurewebsites.net",
+  "BACKEND_URL": "https://nbg-webapp-rdarr-core-we-dev-01.azurewebsites.net",
+  "DOCKER_REGISTRY_SERVER_PASSWORD": "@Microsoft.KeyVault(VaultName=direct-development-kv;SecretName=rdarr-acr-password)",
+  "DOCKER_REGISTRY_SERVER_URL": "https://idpdirectacr.azurecr.io",
+  "DOCKER_REGISTRY_SERVER_USERNAME": "57e01612-19cd-45f3-bdd6-0797a12371b8",
+  "WEBSITES_ENABLE_APP_SERVICE_STORAGE": "false",
+  "WEBSITES_PORT": "80"
+}

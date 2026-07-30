@@ -8,6 +8,7 @@ import {
   getSessionChunks,
 } from '../lib/tokenEncryption';
 import * as msal from '../lib/msalClient';
+import { PERSONA_HEADER_ALLOWED } from '../lib/appEnv';
 
 /**
  * OIDC login endpoints (NBG Identity, authorization_code + PKCE).
@@ -52,6 +53,10 @@ router.get('/auth/config', (_req: Request, res: Response) => {
     client_id: CLIENT_ID,
     scope: SCOPE,
     redirect_uri: REDIRECT_URI,
+    // Whether the UAT persona dropdown (X-User-Id switcher) is active. When off,
+    // the role comes from the verified token/directory and the SPA hides the
+    // switcher — there is nothing to switch to.
+    persona_mode: PERSONA_HEADER_ALLOWED,
   });
 });
 

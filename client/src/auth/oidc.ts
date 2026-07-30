@@ -41,6 +41,9 @@ export interface AuthConfig {
   client_id: string;
   scope: string;
   redirect_uri: string;
+  /** True when the UAT persona dropdown is active. When false the role comes from
+   *  the token/directory and the SPA hides the switcher. */
+  persona_mode?: boolean;
 }
 
 export interface Identity {
@@ -79,6 +82,16 @@ export async function getAuthConfig(): Promise<AuthConfig> {
 /** Synchronous best-effort: true only after getAuthConfig() has run and reported enabled. */
 export function isAuthEnabled(): boolean {
   return cachedConfig?.enabled === true;
+}
+
+/** Synchronous best-effort: is the UAT persona switcher active? When auth is on
+ *  but persona mode is off, the role comes from the directory and the dropdown is
+ *  hidden. Defaults to true until the config is known, and whenever auth is off
+ *  (local/DISABLE_LOGIN), so the dev switcher keeps working there. */
+export function isPersonaMode(): boolean {
+  if (!cachedConfig) return true;
+  if (cachedConfig.enabled !== true) return true;
+  return cachedConfig.persona_mode !== false;
 }
 
 // ── PKCE helpers ──────────────────────────────────────────────────────────────

@@ -2,7 +2,6 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { query, pool } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole, notifyBuResponders } from '../notify';
-import { userHasRole } from '../middleware/authorization';
 
 const router = Router();
 
@@ -83,14 +82,11 @@ router.put(
         comments?: string;
       };
 
-      const oldRow = await query<{ compliance_score: number | null; comments: string | null; question_id: number; item_number: number }>(
-        `SELECT r.compliance_score, r.comments, r.question_id, q.item_number
-         FROM responses r JOIN questions q ON q.id = r.question_id
-         WHERE r.id = $1 AND r.cycle_id = $2`,
+      const oldRow = await query<{ compliance_score: number | null; comments: string | null }>(
+        `SELECT compliance_score, comments FROM responses WHERE id = $1 AND cycle_id = $2`,
         [id, cycleId]
       );
       const oldScore = oldRow.rows[0]?.compliance_score ?? null;
-      const itemNumber = oldRow.rows[0]?.item_number ?? null;
 
       const result = await query(
         `UPDATE responses
@@ -110,7 +106,7 @@ router.put(
         res.status(400).json({ error: 'Response not found or not editable' });
         return;
       }
-      logAudit({ action: 'response_saved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, item_number: itemNumber, status: result.rows[0].status, old_score: oldScore, new_score: result.rows[0].compliance_score ?? null, comments: comments ?? null } });
+      logAudit({ action: 'response_saved', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, status: result.rows[0].status, old_score: oldScore, new_score: result.rows[0].compliance_score ?? null, comments: comments ?? null } });
       res.json(result.rows[0]);
     } catch (err) {
       next(err);
@@ -156,10 +152,7 @@ router.put(
         [cycleId, question_id, bu_code, material_risk ?? null]
       );
 
-      const qRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [question_id]);
-      const submitItemNumber = qRow.rows[0]?.item_number ?? null;
-
-      logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, item_number: submitItemNumber, new_score: result.rows[0].compliance_score ?? null } });
+      logAudit({ action: 'response_submitted', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, new_score: result.rows[0].compliance_score ?? null } });
 
       const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
       const cycleName = cycleRow.rows[0]?.name ?? `Cycle ${cycleId}`;
@@ -201,15 +194,9 @@ router.post(
         await client.query('BEGIN');
 
         // Save scores/comments and mark submitted in one pass per item
-        const submittedRows: Array<{
-          id: number; question_id: number; bu_code: string; material_risk: string | null;
-          compliance_score: number | null; comments: string | null;
-        }> = [];
+        const submittedRows: Array<{ id: number; question_id: number; bu_code: string; material_risk: string | null }> = [];
         for (const item of items) {
-          const r = await client.query<{
-            id: number; question_id: number; bu_code: string; material_risk: string | null;
-            compliance_score: number | null; comments: string | null;
-          }>(
+          const r = await client.query<{ id: number; question_id: number; bu_code: string; material_risk: string | null }>(
             `UPDATE responses
              SET compliance_score = $3,
                  comments         = $4,
@@ -219,7 +206,7 @@ router.post(
                  responder_id     = COALESCE(responder_id, $5),
                  responder_name   = COALESCE(responder_name, $6)
              WHERE id = $1 AND cycle_id = $2 AND status IN ('draft', 'in_progress', 'returned')
-             RETURNING id, question_id, bu_code, material_risk, compliance_score, comments`,
+             RETURNING id, question_id, bu_code, material_risk`,
             [item.id, cycleId, item.compliance_score ?? null, item.comments ?? null, req.user!.id, req.user!.display_name]
           );
           if (r.rows.length) submittedRows.push(r.rows[0]);
@@ -247,33 +234,17 @@ router.post(
 
         await client.query('COMMIT');
 
-        // Look up item_numbers for all submitted questions in one query
-        const questionIds = [...new Set(submittedRows.map(r => r.question_id))];
-        const qNumRows = await query<{ id: number; item_number: number }>(
-          `SELECT id, item_number FROM questions WHERE id = ANY($1::int[])`,
-          [questionIds]
-        );
-        const itemNumberMap = new Map(qNumRows.rows.map(r => [r.id, r.item_number]));
-
-        // Log one audit entry per submitted response (score + comments visible per item)
-        for (const row of submittedRows) {
-          logAudit({
-            action: 'response_submitted',
-            actor_id: req.user!.id,
-            actor_name: req.user!.display_name,
-            actor_role: req.user!.role,
-            entity_type: 'response',
-            entity_id: String(row.id),
-            cycle_id: parseInt(String(cycleId), 10),
-            details: {
-              bu_code: row.bu_code,
-              question_id: row.question_id,
-              item_number: itemNumberMap.get(row.question_id) ?? null,
-              new_score: row.compliance_score,
-              comments: row.comments,
-            },
-          });
-        }
+        // Audit + single notification (fire-and-forget)
+        logAudit({
+          action: 'response_submitted',
+          actor_id: req.user!.id,
+          actor_name: req.user!.display_name,
+          actor_role: req.user!.role,
+          entity_type: 'cycle',
+          entity_id: String(cycleId),
+          cycle_id: parseInt(String(cycleId), 10),
+          details: { submitted_count: submittedRows.length, bu_codes: buCodes },
+        });
 
         const cycleRow = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
         const cycleName = cycleRow.rows[0]?.name ?? `Cycle ${cycleId}`;
@@ -302,7 +273,7 @@ router.post(
 router.put(
   '/api/cycles/:cycleId/responses/:id/return',
   async (req: Request, res: Response, next: NextFunction) => {
-    if (!userHasRole(req.user, 'Validator')) {
+    if (req.user?.role !== 'Validator' && req.user?.role !== 'Admin') {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -333,10 +304,7 @@ router.put(
         [cycleId, question_id, bu_code, material_risk ?? null]
       );
 
-      const returnQRow = await query<{ item_number: number }>(`SELECT item_number FROM questions WHERE id = $1`, [question_id]);
-      const returnItemNumber = returnQRow.rows[0]?.item_number ?? null;
-
-      logAudit({ action: 'response_returned', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, item_number: returnItemNumber, return_comment: return_comment ?? null } });
+      logAudit({ action: 'response_returned', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'response', entity_id: String(result.rows[0].id), cycle_id: parseInt(String(cycleId), 10), details: { bu_code: result.rows[0].bu_code, question_id: result.rows[0].question_id, return_comment: return_comment ?? null } });
 
       const cycleRowR = await query<{ name: string }>(`SELECT name FROM questionnaire_cycles WHERE id = $1`, [cycleId]);
       const cycleNameR = cycleRowR.rows[0]?.name ?? `Cycle ${cycleId}`;

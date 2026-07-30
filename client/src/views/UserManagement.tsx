@@ -23,12 +23,11 @@ interface GroupMapping {
 interface UserForm {
   display_name: string;
   role: UserRole;
-  secondary_role: 'Validator' | null;
   primary_unit_code: string;
   unit_codes: string;
 }
 
-const EMPTY_FORM: UserForm = { display_name: '', role: 'Responder', secondary_role: null, primary_unit_code: '', unit_codes: '' };
+const EMPTY_FORM: UserForm = { display_name: '', role: 'Responder', primary_unit_code: '', unit_codes: '' };
 
 function RoleBadge({ role }: { role: string }) {
   const c = ROLE_COLORS[role as UserRole] ?? { bg: 'var(--chip)', color: 'var(--muted)', border: 'var(--line)' };
@@ -189,7 +188,6 @@ export default function UserManagement() {
     setForm({
       display_name: user.display_name,
       role: user.role,
-      secondary_role: user.secondary_role === 'Validator' ? 'Validator' : null,
       primary_unit_code: user.primary_unit_code ?? '',
       unit_codes: user.unit_codes.join(', '),
     });
@@ -204,7 +202,6 @@ export default function UserManagement() {
     const payload = {
       display_name: form.display_name.trim(),
       role: form.role,
-      secondary_role: null as string | null,
       primary_unit_code: form.primary_unit_code.trim() || null,
       unit_codes: form.unit_codes.split(',').map(s => s.trim()).filter(Boolean),
     };
@@ -355,10 +352,7 @@ export default function UserManagement() {
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{u.display_name}</div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{u.id}</div>
                           </td>
-                          <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                            <RoleBadge role={u.role} />
-                            {u.secondary_role && <RoleBadge role={u.secondary_role} />}
-                          </td>
+                          <td><RoleBadge role={u.role} /></td>
                           <td><StatusBadge active={u.is_active} /></td>
                           <td className="small">{u.primary_unit_code ?? <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                           <td className="small" style={{ whiteSpace: 'nowrap', color: u.last_login_at ? 'var(--text)' : 'var(--muted)' }}>
@@ -598,7 +592,7 @@ export default function UserManagement() {
               </div>
               <div className="field">
                 <label>Role</label>
-                <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as UserRole, secondary_role: null }))}>
+                <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as UserRole }))}>
                   {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
                 <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>

@@ -14,7 +14,12 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Serve with nginx ─────────────────────────────────────────────────
-FROM nginx:1.27-alpine
+# Keep this base current: every finding Defender raises against this image is an
+# Alpine OS package (openssl/libpng/musl/curl/busybox/zlib/xz/libxpm) inherited
+# from the base, never anything we install — so the whole set clears by moving to
+# a newer nginx-alpine and nothing else. 1.27-alpine sat on Alpine 3.21 and had
+# accumulated 42 of them.
+FROM nginx:1.31-alpine
 
 # Replace default config with ours (BACKEND_URL is substituted at runtime)
 RUN rm /etc/nginx/conf.d/default.conf
@@ -28,5 +33,5 @@ RUN chmod +x /app/docker-entrypoint.sh && \
 
 USER nginx
 
-EXPOSE 80 443
+EXPOSE 80
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

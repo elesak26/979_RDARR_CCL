@@ -1,0 +1,6 @@
+{
+  "API_UPSTREAM": "https://nbg-webapp-rdarr-core-we-qa-01.azurewebsites.net",
+  "BACKEND_URL": "https://nbg-webapp-rdarr-core-we-qa-01.azurewebsites.net",
+  "WEBSITES_ENABLE_APP_SERVICE_STORAGE": "false",
+  "WEBSITES_PORT": "80"
+}
