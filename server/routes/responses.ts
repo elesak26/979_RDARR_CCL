@@ -5,6 +5,17 @@ import { notifyRole, notifyBuResponders } from '../notify';
 
 const router = Router();
 
+// Returns true if the authenticated user may access the given bu_code.
+// Validators, Senior Validators, and Admins see all BUs.
+// Responders are restricted to their assigned unit_codes.
+function buAllowed(req: Request, buCode: string): boolean {
+  const role = req.user?.role;
+  if (role === 'Validator' || role === 'Senior Validator' || role === 'Admin') return true;
+  const codes = req.user?.unit_codes ?? [];
+  // Match on the BU prefix (e.g. "023" matches both "023" and "023-956")
+  return codes.some(c => buCode === c || buCode.startsWith(c + '-'));
+}
+
 // GET /api/cycles/:cycleId/responses — list responses, optional ?bu_code= filter
 router.get(
   '/api/cycles/:cycleId/responses',
@@ -12,6 +23,7 @@ router.get(
     try {
       const { cycleId } = req.params;
       const { bu_code } = req.query as { bu_code?: string };
+      const role = req.user?.role;
 
       let sql = `
         SELECT r.*, q.item_number, q.thematic_area, q.requirement,
@@ -25,10 +37,21 @@ router.get(
           AND (c.status <> 'closed' OR r.status = 'submitted')`;
       const params: unknown[] = [cycleId];
 
-      if (bu_code) {
-        const codes = req.user?.unit_codes?.length ? req.user.unit_codes : [bu_code];
+      if (role === 'Responder') {
+        // Responders are scoped to their own BUs — ignore the ?bu_code query param
+        // to prevent IDOR (a Responder requesting ?bu_code=other_bu to see peer data).
+        const ownCodes = req.user?.unit_codes ?? [];
+        if (ownCodes.length === 0) {
+          // No assigned BUs — return empty set, not 403, so the UI loads cleanly.
+          res.json([]);
+          return;
+        }
         sql += ` AND r.bu_code = ANY($2::text[])`;
-        params.push(codes);
+        params.push(ownCodes);
+      } else if (bu_code) {
+        // Validators / Admins may filter by an explicit bu_code.
+        sql += ` AND r.bu_code = $2`;
+        params.push(bu_code);
       }
 
       sql += ' ORDER BY q.item_number, r.bu_code, r.material_risk';
@@ -47,7 +70,13 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { cycleId, id } = req.params;
-      const result = await query(
+      const result = await query<{
+        bu_code: string;
+        item_number: string; thematic_area: string; requirement: string;
+        expectations: string; score_1_desc: string; score_2_desc: string;
+        score_3_desc: string; score_4_desc: string; respondents_hint: string;
+        supportive_material: string; question_material_risk: string;
+      }>(
         `SELECT r.*, q.item_number, q.thematic_area, q.requirement,
                 q.expectations, q.score_1_desc, q.score_2_desc, q.score_3_desc, q.score_4_desc,
                 q.respondents_hint, q.supportive_material, q.material_risk AS question_material_risk
@@ -60,7 +89,12 @@ router.get(
         res.status(404).json({ error: 'Response not found' });
         return;
       }
-      res.json(result.rows[0]);
+      const row = result.rows[0];
+      if (!buAllowed(req, row.bu_code)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      res.json(row);
     } catch (err) {
       next(err);
     }
@@ -82,10 +116,19 @@ router.put(
         comments?: string;
       };
 
-      const oldRow = await query<{ compliance_score: number | null; comments: string | null }>(
-        `SELECT compliance_score, comments FROM responses WHERE id = $1 AND cycle_id = $2`,
+      const oldRow = await query<{ compliance_score: number | null; comments: string | null; bu_code: string }>(
+        `SELECT compliance_score, comments, bu_code FROM responses WHERE id = $1 AND cycle_id = $2`,
         [id, cycleId]
       );
+      if (oldRow.rows.length === 0) {
+        res.status(400).json({ error: 'Response not found or not editable' });
+        return;
+      }
+      // Ownership: the Responder must own the BU this response belongs to.
+      if (!buAllowed(req, oldRow.rows[0].bu_code)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
       const oldScore = oldRow.rows[0]?.compliance_score ?? null;
 
       const result = await query(
@@ -124,6 +167,20 @@ router.put(
     }
     try {
       const { cycleId, id } = req.params;
+
+      // Ownership check before mutating.
+      const ownerRow = await query<{ bu_code: string }>(
+        `SELECT bu_code FROM responses WHERE id = $1 AND cycle_id = $2`,
+        [id, cycleId]
+      );
+      if (ownerRow.rows.length === 0) {
+        res.status(400).json({ error: 'Response not found or not in a submittable status' });
+        return;
+      }
+      if (!buAllowed(req, ownerRow.rows[0].bu_code)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
 
       const result = await query<{ id: number; question_id: number; bu_code: string; material_risk: string | null; status: string; compliance_score: number | null }>(
         `UPDATE responses
@@ -186,6 +243,19 @@ router.post(
 
       if (!Array.isArray(items) || items.length === 0) {
         res.status(400).json({ error: 'No items provided' });
+        return;
+      }
+
+      // Pre-flight ownership check: every response in the batch must belong to the
+      // Responder's own BUs. Reject the entire batch if any ID is foreign.
+      const ids = items.map(i => i.id);
+      const ownerCheck = await query<{ id: number; bu_code: string }>(
+        `SELECT id, bu_code FROM responses WHERE id = ANY($1) AND cycle_id = $2`,
+        [ids, cycleId]
+      );
+      const forbidden = ownerCheck.rows.filter(r => !buAllowed(req, r.bu_code));
+      if (forbidden.length > 0) {
+        res.status(403).json({ error: 'Forbidden' });
         return;
       }
 

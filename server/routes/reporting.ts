@@ -8,9 +8,23 @@ const router = Router();
 router.get(
   '/api/reporting/cycle/:cycleId/summary',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    // Responders see their own BU data only (enforced via ?bu_code scoping below).
+    // Viewers, Validators, Senior Validators, and Admins see cross-BU aggregate data.
+    if (!role) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
       const { cycleId } = req.params;
-      const buCode = req.query.bu_code as string | undefined;
+      // Responders may only request their own BUs; ignore the query param and use
+      // unit_codes from the verified token to prevent IDOR enumeration.
+      let buCode = req.query.bu_code as string | undefined;
+      if (role === 'Responder') {
+        const ownCodes = req.user?.unit_codes ?? [];
+        // If Responder has no BU assigned, return an empty-but-valid response.
+        buCode = ownCodes.length > 0 ? ownCodes[0] : '__none__';
+      }
 
       // ── Cycle-level counts ───────────────────────────────────────────────
       const countsResult = await query<{
@@ -409,10 +423,15 @@ router.get(
   }
 );
 
-// GET /api/reporting/cycle/:cycleId/export/excel — download xlsx (all validations, any status)
+// GET /api/reporting/cycle/:cycleId/export/excel — download xlsx (Validator, Senior Validator, Admin)
 router.get(
   '/api/reporting/cycle/:cycleId/export/excel',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
       const { cycleId } = req.params;
 

@@ -41,9 +41,16 @@ const valAttachUpload = multer({ storage: valAttachStorage, limits: { fileSize: 
 const router = Router();
 
 // GET /api/cycles/:cycleId/validations — list all validations for a cycle (join questions)
+// Restricted to roles that perform or review validation; Responders and Viewers
+// must not see other BUs' validation scores or justifications.
 router.get(
   '/api/cycles/:cycleId/validations',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
       const { cycleId } = req.params;
       const result = await query(
@@ -73,6 +80,11 @@ router.get(
 router.get(
   '/api/cycles/:cycleId/validations/:id',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
       const { cycleId, id } = req.params;
 
@@ -599,6 +611,11 @@ router.put(
 router.get(
   '/api/cycles/:cycleId/validations/:id/attachments',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
       const { id } = req.params;
       const result = await query(
@@ -676,10 +693,10 @@ router.delete(
       return;
     }
     try {
-      const { attachId } = req.params;
+      const { attachId, id } = req.params;
       const result = await query<{ file_path: string }>(
-        `DELETE FROM validation_attachments WHERE id = $1 RETURNING file_path`,
-        [attachId]
+        `DELETE FROM validation_attachments WHERE id = $1 AND validation_id = $2 RETURNING file_path`,
+        [attachId, id]
       );
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });
@@ -697,11 +714,16 @@ router.delete(
 router.get(
   '/api/cycles/:cycleId/validations/:id/attachments/:attachId/download',
   async (req: Request, res: Response, next: NextFunction) => {
+    const role = req.user?.role;
+    if (role !== 'Validator' && role !== 'Senior Validator' && role !== 'Admin') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
     try {
-      const { attachId } = req.params;
+      const { attachId, id } = req.params;
       const result = await query<{ file_name: string; file_path: string }>(
-        `SELECT file_name, file_path FROM validation_attachments WHERE id = $1`,
-        [attachId]
+        `SELECT file_name, file_path FROM validation_attachments WHERE id = $1 AND validation_id = $2`,
+        [attachId, id]
       );
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });

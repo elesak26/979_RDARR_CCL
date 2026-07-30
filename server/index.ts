@@ -24,7 +24,7 @@ import { mailerEnabled, mailerPosture } from './lib/mailer';
 import { msalEnabled, assertConfigIfEnabled as assertMsalConfig } from './lib/msalClient';
 import { authMiddleware } from './middleware/auth';
 import { errorHandler } from './middleware/error-handler';
-import { generalLimiter } from './middleware/rate-limit';
+import { generalLimiter, perUserLimiter, mutationLimiter } from './middleware/rate-limit';
 import { ipWhitelistMiddleware } from './middleware/ip-whitelist';
 
 import healthRouter from './routes/health';
@@ -132,6 +132,17 @@ app.use(authRouter);
 // ── Auth middleware for all /api/* routes ────────────────────────────────────
 app.use('/api', authMiddleware as express.RequestHandler);
 
+// Post-auth rate limiters: keyed on verified req.user.id (not on a spoofable
+// header). generalLimiter already ran pre-auth as a blunt IP guard; these two
+// enforce per-identity budgets for reads and mutations separately.
+app.use('/api', perUserLimiter);
+app.use('/api', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    return (mutationLimiter as express.RequestHandler)(req, res, next);
+  }
+  next();
+});
+
 // ── API routers ──────────────────────────────────────────────────────────────
 app.use(usersRouter);
 app.use(cyclesRouter);
@@ -163,7 +174,7 @@ app.listen(PORT, () => {
 
   logger.info(
     { port: PORT, database },
-    'RVMT — RDARR Validation Management Tool server started'
+    'COMPASS — RDARR Validation Management Tool server started'
   );
 });
 

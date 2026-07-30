@@ -44,18 +44,48 @@ const upload = multer({
   fileFilter: uploadFileFilter,
 });
 
+// Resolve the bu_code that owns a given response, or null if it doesn't exist.
+async function getResponseBuCode(responseId: string | string[], cycleId: string | string[]): Promise<string | null> {
+  const r = await query<{ bu_code: string }>(
+    `SELECT bu_code FROM responses WHERE id = $1 AND cycle_id = $2`,
+    [String(responseId), String(cycleId)]
+  );
+  return r.rows[0]?.bu_code ?? null;
+}
+
+// Returns true if the user may access data belonging to buCode.
+// Validators, Senior Validators, and Admins see all BUs.
+// Responders are restricted to their assigned unit_codes.
+function buAllowed(req: Request, buCode: string): boolean {
+  const role = req.user?.role;
+  if (role === 'Validator' || role === 'Senior Validator' || role === 'Admin') return true;
+  const codes = req.user?.unit_codes ?? [];
+  return codes.some(c => buCode === c || buCode.startsWith(c + '-'));
+}
+
 // GET /api/cycles/:cycleId/responses/:id/attachments
 router.get(
   '/api/cycles/:cycleId/responses/:id/attachments',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = req.params;
+      const { id: responseId, cycleId } = req.params;
+
+      const buCode = await getResponseBuCode(responseId, cycleId);
+      if (!buCode) {
+        res.status(404).json({ error: 'Response not found' });
+        return;
+      }
+      if (!buAllowed(req, buCode)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
       const result = await query(
         `SELECT id, response_id, file_name, file_path, uploaded_by, uploaded_at
          FROM response_attachments
          WHERE response_id = $1
          ORDER BY uploaded_at`,
-        [id]
+        [responseId]
       );
       res.json(result.rows);
     } catch (err) {
@@ -78,7 +108,21 @@ router.post(
       return;
     }
     try {
-      const { id: responseId } = req.params;
+      const { id: responseId, cycleId } = req.params;
+
+      // Ownership check: this Responder must own the BU of the response they're attaching to.
+      const buCode = await getResponseBuCode(responseId, cycleId);
+      if (!buCode) {
+        fs.unlink(req.file.path, () => {});
+        res.status(404).json({ error: 'Response not found' });
+        return;
+      }
+      if (!buAllowed(req, buCode)) {
+        fs.unlink(req.file.path, () => {});
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
       const file = req.file;
       const decodedName = decodeFilename(file.originalname);
 
@@ -152,10 +196,22 @@ router.delete(
       return;
     }
     try {
-      const { attachId: attachmentId, id: responseId } = req.params;
+      const { attachId: attachmentId, id: responseId, cycleId } = req.params;
+
+      // Ownership check: verify the response belongs to the Responder's BU before deleting.
+      const buCode = await getResponseBuCode(responseId, cycleId);
+      if (!buCode) {
+        res.status(404).json({ error: 'Response not found' });
+        return;
+      }
+      if (!buAllowed(req, buCode)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
       const result = await query<{ file_path: string }>(
-        `DELETE FROM response_attachments WHERE id = $1 RETURNING file_path`,
-        [attachmentId]
+        `DELETE FROM response_attachments WHERE id = $1 AND response_id = $2 RETURNING file_path`,
+        [attachmentId, responseId]
       );
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });
@@ -175,10 +231,22 @@ router.get(
   '/api/cycles/:cycleId/responses/:id/attachments/:attachId/download',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { attachId } = req.params;
+      const { attachId, id: responseId, cycleId } = req.params;
+
+      // Ownership: verify the response belongs to a BU this user may access.
+      const buCode = await getResponseBuCode(responseId, cycleId);
+      if (!buCode) {
+        res.status(404).json({ error: 'Response not found' });
+        return;
+      }
+      if (!buAllowed(req, buCode)) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+
       const result = await query<{ file_name: string; file_path: string }>(
-        `SELECT file_name, file_path FROM response_attachments WHERE id = $1`,
-        [attachId]
+        `SELECT file_name, file_path FROM response_attachments WHERE id = $1 AND response_id = $2`,
+        [attachId, responseId]
       );
       if (result.rows.length === 0) {
         res.status(404).json({ error: 'Attachment not found' });

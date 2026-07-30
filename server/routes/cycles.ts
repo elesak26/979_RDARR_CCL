@@ -704,8 +704,17 @@ router.post(
   }
 );
 
-// GET /api/cycles/:id/checklist — download checklist file (authenticated)
+// GET /api/cycles/:id/checklist — download checklist file
+// Validators, Senior Validators, and Admins can always download.
+// Responders may download if they have at least one BU assigned to this cycle
+// (the checklist was distributed to them).
 router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next: NextFunction) => {
+  const role = req.user?.role;
+  const allowedRoles = new Set(['Admin', 'Validator', 'Senior Validator', 'Responder', 'Viewer']);
+  if (!role || !allowedRoles.has(role)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
   try {
     const { id } = req.params;
     const result = await query<{ checklist_file: string | null; name: string }>(
@@ -721,6 +730,28 @@ router.get('/api/cycles/:id/checklist', async (req: Request, res: Response, next
       res.status(404).json({ error: 'No checklist uploaded for this cycle' });
       return;
     }
+
+    // Responders: verify they are assigned at least one BU in this cycle.
+    if (role === 'Responder') {
+      const ownCodes = req.user?.unit_codes ?? [];
+      if (ownCodes.length > 0) {
+        const assigned = await query<{ exists: boolean }>(
+          `SELECT EXISTS(
+             SELECT 1 FROM question_applicability
+             WHERE cycle_id = $1 AND bu_code = ANY($2::text[])
+           ) AS exists`,
+          [id, ownCodes]
+        );
+        if (!assigned.rows[0]?.exists) {
+          res.status(403).json({ error: 'Forbidden' });
+          return;
+        }
+      } else {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+    }
+
     // Derive original name from stored filename (strip timestamp prefix)
     const originalName = checklist_file.replace(/^\d+_/, '').replace(/_/g, ' ');
     await sendDownload(res, checklist_file, originalName || `${cycleName}_checklist.xlsx`);

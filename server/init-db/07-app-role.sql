@@ -13,18 +13,35 @@
 --   No TRUNCATE, no DROP, no CREATE, no REFERENCES, no superuser attributes.
 --
 -- HOW TO USE:
---   1. Run this script once as the DB superuser / owner.
---   2. Set DB_USER=ccl_app and DB_PASSWORD=<strong-secret> in server/.env
---      (or configure the Azure Managed Identity to be mapped to this role).
---   3. Stop using `sa` / the owner account for the running application.
+--   1. Generate a strong password and store it in Azure Key Vault:
+--        openssl rand -base64 32 | tr -d '\n' | az keyvault secret set \
+--          --vault-name <vault-name> --name rdarr-ccl-app-db-password --value @-
+--   2. Run this script as the DB superuser, supplying the password at runtime:
+--        export CCL_APP_PASSWORD="$(az keyvault secret show \
+--          --vault-name <vault-name> --name rdarr-ccl-app-db-password \
+--          --query value -o tsv)"
+--        psql "$SUPERUSER_DSN" \
+--          -c "SET myvars.ccl_app_password = '$CCL_APP_PASSWORD'" \
+--          -f 07-app-role.sql
+--   3. In App Service configuration set:
+--        DB_USER     = ccl_app
+--        DB_PASSWORD = @Microsoft.KeyVault(VaultName=<vault>;SecretName=rdarr-ccl-app-db-password)
+--   4. Stop using `sa` / the DB owner account for the running application.
 --
+-- Azure (production / QA): prefer DB_AUTH=msi (Managed Identity) — no password
+-- is needed. Only local dev uses DB_AUTH=sql + DB_PASSWORD.
+--
+-- NEVER hardcode the password in this file or in any configuration file.
 -- The script is idempotent: DO blocks guard every DDL statement.
 
 -- ── Create role if it does not exist ─────────────────────────────────────────
+-- Password is injected at runtime via the GUC myvars.ccl_app_password (see
+-- HOW TO USE above). No password literal is stored in this file.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ccl_app') THEN
-    CREATE ROLE ccl_app LOGIN PASSWORD 'CHANGE_ME_ccl_app_2026!';
+    EXECUTE format('CREATE ROLE ccl_app LOGIN PASSWORD %L',
+                   current_setting('myvars.ccl_app_password'));
   END IF;
 END
 $$;

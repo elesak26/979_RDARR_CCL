@@ -5,23 +5,39 @@ import { logAudit } from '../audit';
 const router = Router({ mergeParams: true });
 
 // GET /api/cycles/:cycleId/applicability
+// Validators, SVs, and Admins see all BU assignments.
+// Responders see only the questions assigned to their own unit_codes so they
+// know which items they need to fill in — but not the full cross-BU picture.
 router.get(
   '/api/cycles/:cycleId/applicability',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { cycleId } = req.params;
-      const result = await query(
-        `SELECT
-           qa.id, qa.cycle_id, qa.question_id, qa.bu_code, qa.bu_name,
-           qa.assigned_by, qa.assigned_at,
-           q.item_number, q.thematic_area, q.requirement,
-           q.bcbs_principle_number, q.bcbs_principle_name
-         FROM question_applicability qa
-         JOIN questions q ON q.id = qa.question_id
-         WHERE qa.cycle_id = $1
-         ORDER BY q.item_number, qa.bu_code`,
-        [cycleId]
-      );
+      const role = req.user?.role;
+
+      let sql = `
+        SELECT
+          qa.id, qa.cycle_id, qa.question_id, qa.bu_code, qa.bu_name,
+          qa.assigned_by, qa.assigned_at,
+          q.item_number, q.thematic_area, q.requirement,
+          q.bcbs_principle_number, q.bcbs_principle_name
+        FROM question_applicability qa
+        JOIN questions q ON q.id = qa.question_id
+        WHERE qa.cycle_id = $1`;
+      const params: unknown[] = [cycleId];
+
+      if (role === 'Responder') {
+        const ownCodes = req.user?.unit_codes ?? [];
+        if (ownCodes.length === 0) {
+          res.json([]);
+          return;
+        }
+        sql += ` AND qa.bu_code = ANY($2::text[])`;
+        params.push(ownCodes);
+      }
+
+      sql += ' ORDER BY q.item_number, qa.bu_code';
+      const result = await query(sql, params);
       res.json(result.rows);
     } catch (err) {
       next(err);
