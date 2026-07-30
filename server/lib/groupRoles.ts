@@ -186,6 +186,7 @@ export async function resolveGroupRole(claims: Record<string, unknown>): Promise
 export interface AdUser {
   id: string;
   display_name: string;
+  email: string | null;
   role: string;
   unit_codes: string[];
   primary_unit_code: string | null;
@@ -207,9 +208,15 @@ export function buildAdUser(claims: Record<string, unknown>, resolved: ResolvedR
     str(claims.email) ||
     str(claims.sub) ||
     'Unknown';
+  const email =
+    str(claims.email) ||
+    str(claims.preferred_username) ||
+    str(claims.upn) ||
+    null;
   return {
     id: String(claims.sub ?? claims.oid ?? displayName),
     display_name: displayName,
+    email,
     role: resolved.role,
     unit_codes: [],
     primary_unit_code: null,

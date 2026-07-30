@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx';
 import { query } from '../db';
 import { logAudit } from '../audit';
 import { notifyRole } from '../notify';
+import { sendMail } from '../lib/mailer';
 
 interface ChecklistEntry {
   buCode: string;
@@ -527,13 +528,54 @@ router.put('/api/cycles/:id/distribute', async (req: Request, res: Response, nex
     );
 
     logAudit({ action: 'cycle_distributed', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'cycle', entity_id: String(id), cycle_id: parseInt(String(id), 10), details: { responses_created: insertResult.rowCount } });
-    const cycle2 = result.rows[0] as { name: string };
+    const cycle2 = result.rows[0] as { name: string; description: string | null };
     notifyRole('Validator',
       `Cycle "${cycle2.name}" has been distributed`,
       `Cycle "${cycle2.name}" is now in validation. Items are ready to be assessed by respondents.`,
       parseInt(String(id), 10),
       `/validation`
     ).catch(() => {});
+
+    // Send email to every active Responder who has at least one BU assigned in this cycle.
+    // Fire-and-forget — a mail failure must never block the distribute response.
+    (async () => {
+      try {
+        const responders = await query<{ display_name: string; email: string | null }>(
+          `SELECT DISTINCT u.display_name, u.email
+           FROM users u
+           JOIN question_applicability qa ON qa.bu_code = ANY(
+             SELECT jsonb_array_elements_text(u.unit_codes)
+           )
+           WHERE u.role = 'Responder'
+             AND u.is_active = true
+             AND u.email IS NOT NULL
+             AND qa.cycle_id = $1`,
+          [id]
+        );
+        for (const r of responders.rows) {
+          if (!r.email) continue;
+          await sendMail({
+            to: r.email,
+            subject: `[COMPASS] Self-assessment cycle "${cycle2.name}" is now open`,
+            text: [
+              `Dear ${r.display_name},`,
+              '',
+              `The validation cycle "${cycle2.name}" has been distributed and your self-assessment items are now available for completion.`,
+              '',
+              'Please log in to COMPASS and complete your assigned items at your earliest convenience.',
+              '',
+              cycle2.description ? `Cycle description: ${cycle2.description}` : '',
+              '',
+              'This is an automated notification from COMPASS — Compliance Control Oversight Management, Process Assessment & Scoring System.',
+              'Please do not reply to this email.',
+            ].filter(line => line !== undefined).join('\n'),
+          });
+        }
+      } catch (err) {
+        // Logged inside sendMail; we just swallow here so no unhandled rejection surfaces.
+      }
+    })().catch(() => {});
+
     res.json(result.rows[0]);
   } catch (err) {
     next(err);

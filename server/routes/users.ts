@@ -4,29 +4,20 @@ import { logAudit } from '../audit';
 
 const router = Router();
 
-// to string[] so the API response shape matches the old pg text[] behaviour.
 function parseUnitCodes<T extends { unit_codes?: unknown }>(row: T): T {
   const uc = row?.unit_codes;
   if (typeof uc === 'string') return { ...row, unit_codes: JSON.parse(uc) };
   return row;
 }
 
-// GET /api/users — list all users (with last login for Admins)
-//
-// This cannot be Admin-only today: the persona dropdown and the BU-code → name
-// lookup are both built from this list, and both run for every role. What it can
-// do is stop handing out login history to everyone — only User Management shows
-// that column and it is already Admin-gated, so withholding it for non-Admins
-// costs nothing and removes a "who was working when" signal from every caller.
-//
-// The full restriction belongs with the removal of the persona dropdown: once
-// the acting user comes from the token, no non-Admin screen needs the directory
-// at all and this endpoint becomes Admin-only outright.
+// GET /api/users — list all users
+// email is returned only to Admins (it is a personal data point).
+// last_login_at is also Admin-only.
 router.get('/api/users', async (req: Request, res: Response, next: NextFunction) => {
   const isAdmin = req.user?.role === 'Admin';
   try {
     const result = await query<{ unit_codes?: unknown }>(
-      `SELECT u.id, u.display_name, u.role, u.unit_codes, u.primary_unit_code,
+      `SELECT u.id, u.display_name, u.email, u.role, u.unit_codes, u.primary_unit_code,
               u.is_active, u.created_at,
               (SELECT lh.logged_in_at FROM login_history lh
                WHERE lh.user_id = u.id ORDER BY lh.logged_in_at DESC LIMIT 1) AS last_login_at
@@ -37,7 +28,7 @@ router.get('/api/users', async (req: Request, res: Response, next: NextFunction)
       isAdmin
         ? rows
         : rows.map((r) => {
-            const { last_login_at: _omitted, ...rest } = r as Record<string, unknown>;
+            const { last_login_at: _l, email: _e, ...rest } = r as Record<string, unknown>;
             return rest;
           })
     );
@@ -58,10 +49,11 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
     return;
   }
   try {
-    const { id, display_name, role, unit_codes = [], primary_unit_code = null } = req.body as {
+    const { id, display_name, role, email = null, unit_codes = [], primary_unit_code = null } = req.body as {
       id: string;
       display_name: string;
       role: string;
+      email?: string | null;
       unit_codes?: string[];
       primary_unit_code?: string | null;
     };
@@ -72,9 +64,10 @@ router.post('/api/users', async (req: Request, res: Response, next: NextFunction
     }
 
     const result = await query(
-      `INSERT INTO users (id, display_name, role, unit_codes, primary_unit_code)
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atVALUES ($1, $2, $3, $4, $5)`,
-      [id, display_name, role, unit_codes, primary_unit_code]
+      `INSERT INTO users (id, display_name, email, role, unit_codes, primary_unit_code)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, display_name, email, role, unit_codes, primary_unit_code, is_active, created_at`,
+      [id, display_name, email || null, role, unit_codes, primary_unit_code]
     );
     logAudit({ action: 'user_created', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(result.rows[0].id), details: { display_name: result.rows[0].display_name, role: result.rows[0].role } });
     res.status(201).json(parseUnitCodes(result.rows[0]));
@@ -91,8 +84,9 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
   }
   try {
     const { id } = req.params;
-    const { display_name, role, unit_codes, primary_unit_code } = req.body as {
+    const { display_name, email, role, unit_codes, primary_unit_code } = req.body as {
       display_name?: string;
+      email?: string | null;
       role?: string;
       unit_codes?: string[];
       primary_unit_code?: string | null;
@@ -101,19 +95,21 @@ router.put('/api/users/:id', async (req: Request, res: Response, next: NextFunct
     const result = await query(
       `UPDATE users
        SET
-         display_name     = COALESCE($2, display_name),
-         role             = COALESCE($3, role),
-         unit_codes       = COALESCE($4, unit_codes),
-         primary_unit_code = COALESCE($5, primary_unit_code)
-       RETURNING id, display_name, role, unit_codes, primary_unit_code, is_active, created_atWHERE id = $1`,
-      [id, display_name ?? null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
+         display_name      = COALESCE($2, display_name),
+         email             = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE email END,
+         role              = COALESCE($4, role),
+         unit_codes        = COALESCE($5, unit_codes),
+         primary_unit_code = COALESCE($6, primary_unit_code)
+       WHERE id = $1
+       RETURNING id, display_name, email, role, unit_codes, primary_unit_code, is_active, created_at`,
+      [id, display_name ?? null, email !== undefined ? (email || null) : null, role ?? null, unit_codes ?? null, primary_unit_code ?? null]
     );
 
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    logAudit({ action: 'user_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(id), details: { display_name, role } });
+    logAudit({ action: 'user_updated', actor_id: req.user?.id, actor_name: req.user?.display_name, actor_role: req.user?.role, entity_type: 'user', entity_id: String(id), details: { display_name, email, role } });
     res.json(parseUnitCodes(result.rows[0]));
   } catch (err) {
     next(err);
@@ -133,8 +129,8 @@ router.put('/api/users/:id/toggle-active', async (req: Request, res: Response, n
       return;
     }
     const result = await query(
-      `UPDATE users SET is_active = CASE WHEN is_active = true THEN 0 ELSE 1 END
-       RETURNING id, display_name, role, is_activeWHERE id = $1`,
+      `UPDATE users SET is_active = NOT is_active WHERE id = $1
+       RETURNING id, display_name, role, is_active`,
       [id]
     );
     if (result.rows.length === 0) {
@@ -169,7 +165,7 @@ router.get('/api/users/login-history', async (req: Request, res: Response, next:
        FROM login_history lh
        ${where}
        ORDER BY lh.logged_in_at DESC
-       OFFSET 0 ROWS FETCH NEXT $${params.length} ROWS ONLY`,
+       LIMIT $${params.length}`,
       params
     );
     res.json(result.rows);

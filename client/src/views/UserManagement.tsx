@@ -22,12 +22,13 @@ interface GroupMapping {
 
 interface UserForm {
   display_name: string;
+  email: string;
   role: UserRole;
   primary_unit_code: string;
   unit_codes: string;
 }
 
-const EMPTY_FORM: UserForm = { display_name: '', role: 'Responder', primary_unit_code: '', unit_codes: '' };
+const EMPTY_FORM: UserForm = { display_name: '', email: '', role: 'Responder', primary_unit_code: '', unit_codes: '' };
 
 function RoleBadge({ role }: { role: string }) {
   const c = ROLE_COLORS[role as UserRole] ?? { bg: 'var(--chip)', color: 'var(--muted)', border: 'var(--line)' };
@@ -187,6 +188,7 @@ export default function UserManagement() {
     setEditingUser(user);
     setForm({
       display_name: user.display_name,
+      email: user.email ?? '',
       role: user.role,
       primary_unit_code: user.primary_unit_code ?? '',
       unit_codes: user.unit_codes.join(', '),
@@ -201,6 +203,7 @@ export default function UserManagement() {
     setActionError(null);
     const payload = {
       display_name: form.display_name.trim(),
+      email: form.email.trim() || null,
       role: form.role,
       primary_unit_code: form.primary_unit_code.trim() || null,
       unit_codes: form.unit_codes.split(',').map(s => s.trim()).filter(Boolean),
@@ -325,6 +328,7 @@ export default function UserManagement() {
               <thead>
                 <tr>
                   <th>User</th>
+                  <th>Email</th>
                   <th>Role</th>
                   <th>Status</th>
                   <th>Primary Unit</th>
@@ -334,7 +338,7 @@ export default function UserManagement() {
               </thead>
               <tbody>
                 {users.length === 0 && (
-                  <tr><td colSpan={6} className="small" style={{ textAlign: 'center', padding: 32 }}>No users yet.</td></tr>
+                  <tr><td colSpan={7} className="small" style={{ textAlign: 'center', padding: 32 }}>No users yet.</td></tr>
                 )}
                 {ROLES.map(role => {
                   const roleUsers = users.filter(u => u.role === role);
@@ -342,7 +346,7 @@ export default function UserManagement() {
                   return (
                     <React.Fragment key={role}>
                       <tr style={{ background: 'var(--panel2)' }}>
-                        <td colSpan={6} style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '6px 12px' }}>
+                        <td colSpan={7} style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '6px 12px' }}>
                           {role} ({roleUsers.length})
                         </td>
                       </tr>
@@ -351,6 +355,9 @@ export default function UserManagement() {
                           <td>
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{u.display_name}</div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{u.id}</div>
+                          </td>
+                          <td className="small" style={{ color: u.email ? 'var(--text)' : 'var(--muted)' }}>
+                            {u.email ?? <span style={{ color: 'var(--muted)' }}>—</span>}
                           </td>
                           <td><RoleBadge role={u.role} /></td>
                           <td><StatusBadge active={u.is_active} /></td>
@@ -588,6 +595,15 @@ export default function UserManagement() {
                   onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
                   placeholder="e.g. Maria Papadopoulou"
                   required autoFocus
+                />
+              </div>
+              <div className="field">
+                <label>Email <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(used for distribute notifications)</span></label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="e.g. PAPADOPOULOU.MARIA@nbg.gr"
                 />
               </div>
               <div className="field">

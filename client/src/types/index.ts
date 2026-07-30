@@ -6,6 +6,7 @@ export type UserRole = 'Admin' | 'Validator' | 'Senior Validator' | 'Responder' 
 export interface User {
   id: string;
   display_name: string;
+  email: string | null;
   role: UserRole;
   unit_codes: string[];
   primary_unit_code: string | null;

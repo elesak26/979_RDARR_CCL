@@ -6,7 +6,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "dev": "dotenv -e ../.env tsx watch index.ts",
+    "dev": "dotenv -e .env tsx watch index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "db:migrate": "tsx scripts/run-migrations.ts",

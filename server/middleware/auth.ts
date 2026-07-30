@@ -54,6 +54,7 @@ function rejectIfNoMfa(claims: JWTPayload, res: Response): boolean {
 export interface AuthUser {
   id: string;
   display_name: string;
+  email: string | null;
   role: string;
   secondary_role?: string | null;
   unit_codes: string[];
@@ -88,7 +89,7 @@ function normalizeUser(row: UserRow | undefined): AuthUser | null {
 
 async function resolveUser(id: string): Promise<AuthUser | null> {
   const result = await query<UserRow>(
-    'SELECT id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE id = $1',
+    'SELECT id, display_name, email, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE id = $1',
     [id]
   );
   return normalizeUser(result.rows[0]);
@@ -96,7 +97,7 @@ async function resolveUser(id: string): Promise<AuthUser | null> {
 
 async function firstAdmin(): Promise<AuthUser | null> {
   const result = await query<UserRow>(
-    "SELECT id, display_name, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
+    "SELECT id, display_name, email, role, secondary_role, unit_codes, primary_unit_code, is_active FROM users WHERE role = 'Admin' AND is_active = true LIMIT 1"
   );
   return normalizeUser(result.rows[0]);
 }
@@ -209,7 +210,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       logger.warn({ err }, 'authMiddleware: fallback user fetch failed');
     }
     // No users yet (pre-seed) — allow through with a placeholder.
-    req.user = { id: 'system', display_name: 'System', role: 'Admin', unit_codes: [], primary_unit_code: null, is_active: true };
+    req.user = { id: 'system', display_name: 'System', email: null, role: 'Admin', unit_codes: [], primary_unit_code: null, is_active: true };
     return next();
   }
 
@@ -302,6 +303,13 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     // Mark the global-admin origin so meta-permission routes (group→role mapping)
     // can require it — a business user who holds Admin via a group must not pass.
     req.user.is_global_admin = globalAdmin;
+    // Persist the email from the OIDC token so it is available for outbound mail.
+    if (adUser.email && req.user.email !== adUser.email) {
+      query(
+        `UPDATE users SET email = $1 WHERE id = $2 AND (email IS NULL OR email <> $1)`,
+        [adUser.email, req.user.id]
+      ).catch(() => {});
+    }
     recordLogin(req, req.user).catch(() => {});
     return true; // admitted — caller must call next()
   };

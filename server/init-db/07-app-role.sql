@@ -38,10 +38,19 @@
 -- Password is injected at runtime via the GUC myvars.ccl_app_password (see
 -- HOW TO USE above). No password literal is stored in this file.
 DO $$
+DECLARE
+  _pwd text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ccl_app') THEN
-    EXECUTE format('CREATE ROLE ccl_app LOGIN PASSWORD %L',
-                   current_setting('myvars.ccl_app_password'));
+    -- In production: supply password via SET myvars.ccl_app_password before running.
+    -- In local dev: GUC is absent, so fall back to a placeholder password that
+    --               is never used (the app connects as the owner role in dev).
+    BEGIN
+      _pwd := current_setting('myvars.ccl_app_password');
+    EXCEPTION WHEN undefined_object THEN
+      _pwd := 'local-dev-only-not-used';
+    END;
+    EXECUTE format('CREATE ROLE ccl_app LOGIN PASSWORD %L', _pwd);
   END IF;
 END
 $$;
